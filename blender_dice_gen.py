@@ -787,6 +787,9 @@ def join(objects):
 
 def validate_font_path(filepath):
     # set font to emtpy if it's not a ttf file
+    if filepath and not os.path.isfile(filepath):
+        return ''
+
     if filepath and os.path.splitext(filepath)[1].lower() not in ('.ttf', '.otf'):
         return ''
     return filepath
@@ -847,11 +850,14 @@ def resolve_settings_owner(obj):
 
 def get_font(filepath):
     if filepath:
-        bpy.data.fonts.load(filepath=filepath, check_existing=True)
-        return next(filter(lambda x: x.filepath == filepath, bpy.data.fonts))
-    else:
-        bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
-        return bpy.data.fonts[0]
+        try:
+            bpy.data.fonts.load(filepath=filepath, check_existing=True)
+            return next(filter(lambda x: x.filepath == filepath, bpy.data.fonts))
+        except (RuntimeError, OSError):
+            pass
+
+    bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
+    return bpy.data.fonts[0]
 
 
 def apply_boolean_modifier(body_object, numbers_object):
@@ -1609,12 +1615,7 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             self.report({'ERROR'}, "Object is not a generated die")
             return {'CANCELLED'}
 
-        if numbers_obj and numbers_obj.name in bpy.data.objects:
-            bpy.data.objects.remove(numbers_obj, do_unlink=True)
-
-        for mod in list(body_obj.modifiers):
-            if mod.type == 'BOOLEAN' and mod.name == 'boolean':
-                body_obj.modifiers.remove(mod)
+        original_modifiers = set(body_obj.modifiers)
 
         mesh_cls_map = {
             "Tetrahedron": Tetrahedron,
@@ -1659,36 +1660,68 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
         new_numbers_obj = None
 
         if settings_values["add_numbers"]:
-            if settings_values["number_indicator_type"] != NUMBER_IND_NONE:
-                new_numbers_obj = die.create_numbers(
-                    context,
-                    size,
-                    settings_values["number_scale"],
-                    settings_values["number_depth"],
-                    font_path,
-                    settings_values["one_offset"],
-                    settings_values["number_indicator_type"],
-                    settings_values["period_indicator_scale"],
-                    settings_values["period_indicator_space"],
-                    settings_values["bar_indicator_height"],
-                    settings_values["bar_indicator_width"],
-                    settings_values["bar_indicator_space"],
-                    settings_values["center_bar"],
-                )
-            else:
-                new_numbers_obj = die.create_numbers(
-                    context,
-                    size,
-                    settings_values["number_scale"],
-                    settings_values["number_depth"],
-                    font_path,
-                    settings_values["one_offset"],
-                )
+            try:
+                if settings_values["number_indicator_type"] != NUMBER_IND_NONE:
+                    new_numbers_obj = die.create_numbers(
+                        context,
+                        size,
+                        settings_values["number_scale"],
+                        settings_values["number_depth"],
+                        font_path,
+                        settings_values["one_offset"],
+                        settings_values["number_indicator_type"],
+                        settings_values["period_indicator_scale"],
+                        settings_values["period_indicator_space"],
+                        settings_values["bar_indicator_height"],
+                        settings_values["bar_indicator_width"],
+                        settings_values["bar_indicator_space"],
+                        settings_values["center_bar"],
+                    )
+                else:
+                    new_numbers_obj = die.create_numbers(
+                        context,
+                        size,
+                        settings_values["number_scale"],
+                        settings_values["number_depth"],
+                        font_path,
+                        settings_values["one_offset"],
+                    )
+            except Exception as exc:
+                self.report({'ERROR'}, f"Failed to regenerate numbers: {exc}")
+                return {'CANCELLED'}
+        else:
+            for mod in list(original_modifiers):
+                if mod.type == 'BOOLEAN' and mod.name == 'boolean':
+                    body_obj.modifiers.remove(mod)
+
+            if numbers_obj and numbers_obj.name in bpy.data.objects:
+                bpy.data.objects.remove(numbers_obj, do_unlink=True)
+
+            if "dice_numbers_name" in body_obj:
+                del body_obj["dice_numbers_name"]
+
+            body_obj["dice_gen_type"] = die_type
+            apply_settings(body_obj.dice_gen_settings, settings_values)
+            return {'FINISHED'}
 
         if new_numbers_obj is not None:
+            desired_name = numbers_obj.name if numbers_obj else "dice_numbers"
+            if numbers_obj and numbers_obj.name in bpy.data.objects:
+                numbers_obj.name = f"{numbers_obj.name}_old"
+
+            for mod in list(original_modifiers):
+                if mod.type == 'BOOLEAN' and mod.name == 'boolean':
+                    body_obj.modifiers.remove(mod)
+
             new_numbers_obj["dice_body_name"] = body_obj.name
             new_numbers_obj["dice_gen_type"] = die_type
             apply_settings(new_numbers_obj.dice_gen_settings, settings_values)
+
+            new_numbers_obj.name = desired_name
+            body_obj["dice_numbers_name"] = new_numbers_obj.name
+
+            if numbers_obj and numbers_obj.name in bpy.data.objects:
+                bpy.data.objects.remove(numbers_obj, do_unlink=True)
         else:
             body_obj["dice_gen_type"] = die_type
             apply_settings(body_obj.dice_gen_settings, settings_values)
