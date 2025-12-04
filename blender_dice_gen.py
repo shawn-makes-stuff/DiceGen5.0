@@ -661,14 +661,11 @@ class D100Mesh(SquashedPentagonalTrapezohedron):
 
 class RoundDice(Mesh):
 
-    def __init__(self, name, size, segments, rings, font_scale, cap_margin=math.radians(8)):
+    def __init__(self, name, size, font_scale):
         super().__init__(name)
         self.size = size
-        self.segments = segments
-        self.rings = rings
         self.radius = size / 2
         self.base_font_scale = font_scale
-        self.cap_margin = cap_margin
 
         self.vertices, self.faces = self._build_zocchihedron()
         self.face_centers = [self._face_center(face) for face in self.faces]
@@ -677,36 +674,66 @@ class RoundDice(Mesh):
     def _build_zocchihedron(self):
         vertices = []
         faces = []
-        ring_indices = []
 
-        usable_arc = math.pi - 2 * self.cap_margin
-        step = usable_arc / self.rings
+        ring_latitudes_deg = [60, 30, 0, -30, -60]
+        ring_offsets = [0, 9, 0, 9, 0]
+        segments = 20
 
-        for boundary in range(self.rings + 1):
-            phi = HALF_PI - self.cap_margin - (boundary * step)
-            y = self.radius * math.sin(phi)
-            r = self.radius * math.cos(phi)
+        for ring_index, lat_deg in enumerate(ring_latitudes_deg):
+            lat = math.radians(lat_deg)
+            offset = math.radians(ring_offsets[ring_index])
 
-            current_ring = []
-            for seg in range(self.segments):
-                theta = (2 * math.pi * seg) / self.segments
-                x = r * math.cos(theta)
-                z = r * math.sin(theta)
-                current_ring.append(len(vertices))
-                vertices.append((x, y, z))
-            ring_indices.append(current_ring)
+            y = self.radius * math.sin(lat)
+            r = self.radius * math.cos(lat)
 
-        for ring in range(self.rings):
-            upper = ring_indices[ring]
-            lower = ring_indices[ring + 1]
-            for seg in range(self.segments):
-                next_seg = (seg + 1) % self.segments
-                faces.append([
-                    upper[seg],
-                    upper[next_seg],
-                    lower[next_seg],
-                    lower[seg],
+            # cover the poles by stretching the top and bottom belts
+            top_span_deg = 30 if ring_index == 0 else 15
+            bottom_span_deg = 30 if ring_index == len(ring_latitudes_deg) - 1 else 15
+
+            top_span = math.radians(top_span_deg)
+            bottom_span = math.radians(bottom_span_deg)
+
+            # width of each facet along the ring
+            ring_circumference = 2 * math.pi * r if r != 0 else 0
+            facet_width = ring_circumference / segments if segments else 0
+
+            for seg in range(segments):
+                theta = offset + (2 * math.pi * seg) / segments
+
+                center = Vector((r * math.cos(theta), y, r * math.sin(theta)))
+                normal = center.normalized()
+
+                # tangent along longitude (around the ring)
+                tangent_long = Vector((-math.sin(theta), 0, math.cos(theta)))
+                tangent_long = (tangent_long - normal * tangent_long.dot(normal)).normalized()
+
+                # tangent toward the pole (latitude direction)
+                north = Vector((0, 1, 0))
+                tangent_lat = north - normal * north.dot(normal)
+                if tangent_lat.length < 1e-6:
+                    tangent_lat = Vector((0, 0, 1))
+                tangent_lat.normalize()
+
+                half_width_vec = tangent_long * (facet_width * 0.5)
+                top_height = self.radius * top_span
+                bottom_height = self.radius * bottom_span
+                top_vec = tangent_lat * top_height
+                bottom_vec = -tangent_lat * bottom_height
+
+                # build quad in a consistent winding so normals point outward
+                v0 = center + top_vec + half_width_vec
+                v1 = center + top_vec - half_width_vec
+                v2 = center + bottom_vec - half_width_vec
+                v3 = center + bottom_vec + half_width_vec
+
+                base_index = len(vertices)
+                vertices.extend([
+                    (v0.x, v0.y, v0.z),
+                    (v1.x, v1.y, v1.z),
+                    (v2.x, v2.y, v2.z),
+                    (v3.x, v3.y, v3.z),
                 ])
+                faces.append([base_index, base_index + 1, base_index + 2, base_index + 3])
 
         return vertices, faces
 
@@ -741,7 +768,7 @@ class RoundDice(Mesh):
 class D100Round(RoundDice):
 
     def __init__(self, name, size):
-        super().__init__(name, size, segments=10, rings=10, font_scale=0.19)
+        super().__init__(name, size, font_scale=0.19)
 
 
 def numbers(n: int) -> List[str]:
