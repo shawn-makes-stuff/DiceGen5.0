@@ -933,7 +933,7 @@ def create_svg_mesh(context, filepath, scale, depth, name):
 
     current_dimension = max(svg_mesh.dimensions.x, svg_mesh.dimensions.y)
     current_dimension = current_dimension if current_dimension else 1
-    uniform_scale = scale / current_dimension
+    uniform_scale = (scale * 0.75) / current_dimension
     svg_mesh.scale = (uniform_scale, uniform_scale, 1)
 
     apply_transform(svg_mesh, use_scale=True)
