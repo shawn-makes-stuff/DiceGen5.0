@@ -758,13 +758,26 @@ def apply_transform(ob, use_location=False, use_rotation=False, use_scale=False)
 
 
 def join(objects):
-    bpy.context.view_layer.objects.active = objects[0]
-    ctx = bpy.context.copy()
-    # one of the objects to join
-    ctx['active_object'] = objects[0]
-    ctx['selected_editable_objects'] = objects
-    # TODO apparently, ops calls trigger a viewport refresh, should find a way to replace with a low level join
-    bpy.ops.object.join(ctx)
+    """Join a list of objects into one and return the result."""
+    if not objects:
+        return None
+
+    view_layer = bpy.context.view_layer
+
+    # Deselect everything first
+    for ob in view_layer.objects:
+        ob.select_set(False)
+
+    # Select the objects we want to join
+    for ob in objects:
+        ob.select_set(True)
+
+    # Set the active object (the one that will remain after the join)
+    view_layer.objects.active = objects[0]
+
+    # Run the join operator in the current context
+    bpy.ops.object.join()
+
     return objects[0]
 
 
