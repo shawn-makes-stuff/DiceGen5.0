@@ -25,8 +25,7 @@ Create an issue if you'd like a new dice type to be added.
 - D8 Octahedron
 - D10 Pentagonal Trepazohedron
 - D100 Pentagonal Trepazohedron
-- D50 Round (faceted sphere)
-- D100 Round (faceted sphere)
+- D100 Round (Zocchihedron-style faceted sphere)
 - D12 Dodecahedron
 - D20 Icosahedron
 

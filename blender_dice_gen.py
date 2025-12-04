@@ -661,29 +661,32 @@ class D100Mesh(SquashedPentagonalTrapezohedron):
 
 class RoundDice(Mesh):
 
-    def __init__(self, name, size, segments, bands, font_scale):
+    def __init__(self, name, size, segments, rings, font_scale, cap_margin=math.radians(8)):
         super().__init__(name)
         self.size = size
         self.segments = segments
-        self.bands = bands
+        self.rings = rings
         self.radius = size / 2
         self.base_font_scale = font_scale
+        self.cap_margin = cap_margin
 
-        self.vertices, self.faces = self._build_faceted_sphere()
+        self.vertices, self.faces = self._build_zocchihedron()
         self.face_centers = [self._face_center(face) for face in self.faces]
         self.face_normals = [self._face_normal(face) for face in self.faces]
 
-    def _build_faceted_sphere(self):
+    def _build_zocchihedron(self):
         vertices = []
         faces = []
-        delta = math.pi / (self.bands + 2)
-        ring_count = self.bands + 1
         ring_indices = []
 
-        for ring in range(ring_count):
-            phi = HALF_PI - ((ring + 1) * delta)
+        usable_arc = math.pi - 2 * self.cap_margin
+        step = usable_arc / self.rings
+
+        for boundary in range(self.rings + 1):
+            phi = HALF_PI - self.cap_margin - (boundary * step)
             y = self.radius * math.sin(phi)
             r = self.radius * math.cos(phi)
+
             current_ring = []
             for seg in range(self.segments):
                 theta = (2 * math.pi * seg) / self.segments
@@ -693,18 +696,7 @@ class RoundDice(Mesh):
                 vertices.append((x, y, z))
             ring_indices.append(current_ring)
 
-        top_index = len(vertices)
-        vertices.append((0, self.radius, 0))
-        bottom_index = len(vertices)
-        vertices.append((0, -self.radius, 0))
-
-        # Top cap
-        top_ring = ring_indices[0]
-        for seg in range(self.segments):
-            faces.append([top_index, top_ring[seg], top_ring[(seg + 1) % self.segments]])
-
-        # Middle bands
-        for ring in range(ring_count - 1):
+        for ring in range(self.rings):
             upper = ring_indices[ring]
             lower = ring_indices[ring + 1]
             for seg in range(self.segments):
@@ -715,12 +707,6 @@ class RoundDice(Mesh):
                     lower[next_seg],
                     lower[seg],
                 ])
-
-        # Bottom cap
-        bottom_ring = ring_indices[-1]
-        for seg in range(self.segments):
-            next_seg = (seg + 1) % self.segments
-            faces.append([bottom_index, bottom_ring[next_seg], bottom_ring[seg]])
 
         return vertices, faces
 
@@ -752,16 +738,10 @@ class RoundDice(Mesh):
         return [normal.to_track_quat('Z', 'Y').to_euler() for normal in self.face_normals]
 
 
-class D50Round(RoundDice):
-
-    def __init__(self, name, size):
-        super().__init__(name, size, segments=10, bands=3, font_scale=0.2)
-
-
 class D100Round(RoundDice):
 
     def __init__(self, name, size):
-        super().__init__(name, size, segments=10, bands=8, font_scale=0.18)
+        super().__init__(name, size, segments=10, rings=10, font_scale=0.19)
 
 
 def numbers(n: int) -> List[str]:
@@ -1689,31 +1669,6 @@ class D100Generator(bpy.types.Operator):
                                  number_v_offset=self.number_v_offset)
 
 
-class D50RoundGenerator(bpy.types.Operator):
-    """Generate a round D50"""
-    bl_idname = 'mesh.d50_round_add'
-    bl_label = 'D50 Round'
-    bl_description = 'Generate a round d50 dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    size: Face2FaceProperty(20)
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_indicator_type: NumberIndicatorTypeProperty()
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, D50Round, 'd50Round')
-
-
 class D100RoundGenerator(bpy.types.Operator):
     """Generate a round D100"""
     bl_idname = 'mesh.d100_round_add'
@@ -1783,7 +1738,6 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             "Icosahedron": Icosahedron,
             "D10Mesh": D10Mesh,
             "D100Mesh": D100Mesh,
-            "D50Round": D50Round,
             "D100Round": D100Round,
         }
 
@@ -1934,7 +1888,6 @@ class MeshDiceAdd(Menu):
         layout.operator('mesh.d8_add', text='D8 Octahedron')
         layout.operator('mesh.d10_add', text='D10 Trapezohedron')
         layout.operator('mesh.d100_add', text='D100 Trapezohedron')
-        layout.operator('mesh.d50_round_add', text='D50 Round')
         layout.operator('mesh.d100_round_add', text='D100 Round')
         layout.operator('mesh.d12_add', text='D12 Dodecahedron')
         layout.operator('mesh.d20_add', text='D20 Icosahedron')
@@ -1959,7 +1912,6 @@ classes = [
     D8Generator,
     D10Generator,
     D100Generator,
-    D50RoundGenerator,
     D100RoundGenerator,
     D12Generator,
     D20Generator,
