@@ -913,13 +913,7 @@ def create_svg_mesh(context, filepath, scale, depth, name):
     for curve_obj in curve_objects:
         curve_obj.data.extrude = depth
 
-        target_dimension = scale
-        current_dimension = max(curve_obj.dimensions.x, curve_obj.dimensions.y)
-        current_dimension = current_dimension if current_dimension else 1
-        uniform_scale = target_dimension / current_dimension
-
         mesh = curve_obj.to_mesh().copy()
-        mesh.transform(Matrix.Diagonal((uniform_scale, uniform_scale, 1, 1)))
         new_obj = object_data_add(context, mesh, operator=None)
         mesh_objects.append(new_obj)
 
@@ -936,6 +930,12 @@ def create_svg_mesh(context, filepath, scale, depth, name):
 
     svg_mesh = join(mesh_objects)
     svg_mesh.name = name
+
+    current_dimension = max(svg_mesh.dimensions.x, svg_mesh.dimensions.y)
+    current_dimension = current_dimension if current_dimension else 1
+    uniform_scale = scale / current_dimension
+    svg_mesh.scale = (uniform_scale, uniform_scale, 1)
+
     apply_transform(svg_mesh, use_scale=True)
     return svg_mesh
 
