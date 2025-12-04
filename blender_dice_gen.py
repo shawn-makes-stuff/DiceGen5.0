@@ -7,13 +7,12 @@ from mathutils import Vector, Matrix, Euler
 from bpy.types import Menu
 from bpy.props import FloatProperty, BoolProperty, StringProperty, EnumProperty
 from bpy_extras.object_utils import object_data_add
-from add_mesh_extra_objects.add_mesh_solid import createPolys
 
 bl_info = {
     'name': 'Dice Gen',
     'author': 'Long Tran',
     'version': (1, 1, 1),
-    'blender': (2, 93, 0),
+    'blender': (5, 0, 0),
     'location': 'View3D > Add > Mesh',
     'description': 'Generate polyhedral dice models.',
     'category': 'Add Mesh',
@@ -709,17 +708,9 @@ def set_origin_min_bounds(o):
 def create_mesh(context, vertices, faces, name):
     verts = [Vector(i) for i in vertices]
 
-    # turn n-gons in quads and tri's
-    faces = createPolys(faces)
-
-    # generate object
-    # Create new mesh
+    # Blender can handle n-gons directly, no need for createPolys
     mesh = bpy.data.meshes.new(name)
-
-    # Make a mesh from a list of verts/edges/faces.
     mesh.from_pydata(verts, [], faces)
-
-    # Update mesh geometry after adding stuff.
     mesh.update()
 
     return object_data_add(context, mesh, operator=None)
