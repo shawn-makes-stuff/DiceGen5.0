@@ -5,7 +5,7 @@ from typing import List
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
 from bpy.types import Menu
-from bpy.props import FloatProperty, BoolProperty, StringProperty, EnumProperty
+from bpy.props import FloatProperty, BoolProperty, StringProperty, EnumProperty, PointerProperty
 from bpy_extras.object_utils import object_data_add
 
 bl_info = {
@@ -809,6 +809,9 @@ def apply_boolean_modifier(body_object, numbers_object):
     numbers_boolean.object = bpy.data.objects[numbers_object.name]
     numbers_boolean.show_viewport = False
 
+    # remember the numbers object for regeneration
+    body_object["dice_numbers_name"] = numbers_object.name
+
 
 def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
     # load the font
@@ -938,7 +941,32 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
 
     # create the cube mesh
     die = mesh_cls(name, op.size, **kwargs)
-    die.create(context)
+    die_obj = die.create(context)
+
+    # store type + settings on the object so we can reuse them later
+    die_obj["dice_gen_type"] = mesh_cls.__name__
+
+    settings = die_obj.dice_gen_settings
+    settings.size = op.size
+    settings.font_path = op.font_path
+    settings.number_scale = op.number_scale
+    settings.number_depth = op.number_depth
+    settings.one_offset = op.one_offset
+    settings.add_numbers = op.add_numbers
+    settings.number_indicator_type = getattr(op, "number_indicator_type", settings.number_indicator_type)
+    settings.period_indicator_scale = getattr(op, "period_indicator_scale", settings.period_indicator_scale)
+    settings.period_indicator_space = getattr(op, "period_indicator_space", settings.period_indicator_space)
+    settings.bar_indicator_height = getattr(op, "bar_indicator_height", settings.bar_indicator_height)
+    settings.bar_indicator_width = getattr(op, "bar_indicator_width", settings.bar_indicator_width)
+    settings.bar_indicator_space = getattr(op, "bar_indicator_space", settings.bar_indicator_space)
+    settings.center_bar = getattr(op, "center_bar", settings.center_bar)
+    settings.number_v_offset = getattr(op, "number_v_offset", settings.number_v_offset)
+    settings.number_center_offset = getattr(op, "number_center_offset", settings.number_center_offset)
+    settings.base_height = getattr(op, "base_height", settings.base_height)
+    settings.point_height = getattr(op, "point_height", settings.point_height)
+    settings.top_point_height = getattr(op, "top_point_height", settings.top_point_height)
+    settings.bottom_point_height = getattr(op, "bottom_point_height", settings.bottom_point_height)
+    settings.height = getattr(op, "height", settings.height)
 
     # create number curves
     if op.add_numbers:
@@ -1088,6 +1116,107 @@ def NumberVOffsetProperty(default: float): return FloatProperty(
     soft_max=1,
     default=default
 )
+
+
+class DiceGenSettings(bpy.types.PropertyGroup):
+    size: FloatProperty(
+        name="Face2Face Length",
+        description="Face-to-face size of the die",
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=20,
+        unit='LENGTH',
+    )
+
+    font_path: FontPathProperty
+
+    number_scale: NumberScaleProperty
+
+    number_depth: NumberDepthProperty
+
+    one_offset: OneOffsetProperty
+
+    add_numbers: AddNumbersProperty
+
+    number_indicator_type: NumberIndicatorTypeProperty()
+
+    period_indicator_scale: PeriodIndicatorScaleProperty
+
+    period_indicator_space: PeriodIndicatorSpaceProperty
+
+    bar_indicator_height: BarIndicatorHeightProperty
+
+    bar_indicator_width: BarIndicatorWidthProperty
+
+    bar_indicator_space: BarIndicatorSpaceProperty
+
+    center_bar: CenterBarProperty
+
+    number_v_offset: NumberVOffsetProperty(1 / 3)
+
+    number_center_offset: FloatProperty(
+        name='Number Center Offset',
+        description='Distance of numbers from the center of a face',
+        min=0.0,
+        soft_min=0.0,
+        max=1,
+        soft_max=1,
+        default=0.5
+    )
+
+    base_height: FloatProperty(
+        name='Base Height',
+        description='Base height of the die (height of a face)',
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=14,
+        unit='LENGTH',
+    )
+
+    point_height: FloatProperty(
+        name='Point Height',
+        description='Point height of the die',
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=7,
+        unit='LENGTH',
+    )
+
+    top_point_height: FloatProperty(
+        name='Top Point Height',
+        description='Top point height of the die',
+        min=0.25,
+        soft_min=0.25,
+        max=2,
+        soft_max=2,
+        default=0.75
+    )
+
+    bottom_point_height: FloatProperty(
+        name='Bottom Point Height',
+        description='Bottom point height of the die',
+        min=0.25,
+        soft_min=0.25,
+        max=2.5,
+        soft_max=2.5,
+        default=1.75
+    )
+
+    height: FloatProperty(
+        name='Dice Height',
+        description='Height of the die',
+        min=0.45,
+        soft_min=0.45,
+        max=2,
+        soft_max=2,
+        default=2 / 3
+    )
 
 
 class D4Generator(bpy.types.Operator):
@@ -1401,6 +1530,118 @@ class D100Generator(bpy.types.Operator):
                                  number_v_offset=self.number_v_offset)
 
 
+class OBJECT_OT_dice_gen_update(bpy.types.Operator):
+    bl_idname = "object.dice_gen_update"
+    bl_label = "Update Dice Numbers"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        ob = context.object
+        if ob is None:
+            self.report({'ERROR'}, "No active object")
+            return {'CANCELLED'}
+
+        if not hasattr(ob, "dice_gen_settings"):
+            self.report({'ERROR'}, "Object has no dice settings")
+            return {'CANCELLED'}
+
+        settings = ob.dice_gen_settings
+        die_type = ob.get("dice_gen_type")
+        numbers_name = ob.get("dice_numbers_name")
+
+        if die_type is None:
+            self.report({'ERROR'}, "Object is not a generated die")
+            return {'CANCELLED'}
+
+        if numbers_name and numbers_name in bpy.data.objects:
+            num_obj = bpy.data.objects[numbers_name]
+            bpy.data.objects.remove(num_obj, do_unlink=True)
+
+        for mod in list(ob.modifiers):
+            if mod.type == 'BOOLEAN' and mod.name == 'boolean':
+                ob.modifiers.remove(mod)
+
+        mesh_cls_map = {
+            "Tetrahedron": Tetrahedron,
+            "D4Crystal": D4Crystal,
+            "D4Shard": D4Shard,
+            "Cube": Cube,
+            "Octahedron": Octahedron,
+            "Dodecahedron": Dodecahedron,
+            "Icosahedron": Icosahedron,
+            "D10Mesh": D10Mesh,
+            "D100Mesh": D100Mesh,
+        }
+
+        mesh_cls = mesh_cls_map.get(die_type)
+        if mesh_cls is None:
+            self.report({'ERROR'}, f"Unknown dice type: {die_type}")
+            return {'CANCELLED'}
+
+        size = settings.size
+
+        if die_type == "Tetrahedron":
+            die = mesh_cls(ob.name, size, settings.number_center_offset)
+        elif die_type == "D4Crystal":
+            die = mesh_cls(ob.name, size, settings.base_height, settings.point_height)
+        elif die_type == "D4Shard":
+            die = mesh_cls(ob.name, size, settings.top_point_height, settings.bottom_point_height,
+                           settings.number_v_offset)
+        elif die_type in ("D10Mesh", "D100Mesh"):
+            die = mesh_cls(ob.name, size, settings.height, settings.number_v_offset)
+        else:
+            die = mesh_cls(ob.name, size)
+
+        die.dice_mesh = ob
+
+        font_path = validate_font_path(settings.font_path) if settings.font_path else ""
+
+        if settings.add_numbers:
+            if settings.number_indicator_type != NUMBER_IND_NONE:
+                die.create_numbers(
+                    context, size, settings.number_scale, settings.number_depth,
+                    font_path, settings.one_offset, settings.number_indicator_type,
+                    settings.period_indicator_scale, settings.period_indicator_space,
+                    settings.bar_indicator_height, settings.bar_indicator_width,
+                    settings.bar_indicator_space, settings.center_bar,
+                )
+            else:
+                die.create_numbers(
+                    context, size, settings.number_scale, settings.number_depth,
+                    font_path, settings.one_offset,
+                )
+
+        return {'FINISHED'}
+
+
+class OBJECT_PT_dice_gen(bpy.types.Panel):
+    bl_label = "Dice Gen"
+    bl_idname = "OBJECT_PT_dice_gen"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        ob = context.object
+        return ob is not None and hasattr(ob, "dice_gen_settings") and ob.get("dice_gen_type") is not None
+
+    def draw(self, context):
+        layout = self.layout
+        ob = context.object
+        settings = ob.dice_gen_settings
+
+        col = layout.column()
+        col.prop(settings, "size")
+        col.prop(settings, "font_path")
+        col.prop(settings, "number_scale")
+        col.prop(settings, "number_depth")
+        col.prop(settings, "one_offset")
+
+        layout.separator()
+        layout.operator("object.dice_gen_update", text="Regenerate Dice")
+
+
 class MeshDiceAdd(Menu):
     """
     Dice menu under "Add Mesh"
@@ -1433,6 +1674,7 @@ def menu_func(self, context):
 
 
 classes = [
+    DiceGenSettings,
     MeshDiceAdd,
     D4Generator,
     D4CrystalGenerator,
@@ -1442,7 +1684,9 @@ classes = [
     D10Generator,
     D100Generator,
     D12Generator,
-    D20Generator
+    D20Generator,
+    OBJECT_OT_dice_gen_update,
+    OBJECT_PT_dice_gen
 ]
 
 
@@ -1451,6 +1695,8 @@ def register():
     for cls in classes:
         register_class(cls)
 
+    bpy.types.Object.dice_gen_settings = PointerProperty(type=DiceGenSettings)
+
     # Add "Dice" menu to the "Add Mesh" menu
     bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
 
@@ -1458,6 +1704,8 @@ def register():
 def unregister():
     # Remove "Dice" menu from the "Add Mesh" menu.
     bpy.types.VIEW3D_MT_mesh_add.remove(menu_func)
+
+    del bpy.types.Object.dice_gen_settings
 
     from bpy.utils import unregister_class
     for cls in reversed(classes):
