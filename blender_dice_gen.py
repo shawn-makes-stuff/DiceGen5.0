@@ -1750,11 +1750,9 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
         settings = settings_owner.dice_gen_settings
 
         col = layout.column()
-        col.prop(settings, "size")
         col.prop(settings, "font_path")
         col.prop(settings, "number_scale")
         col.prop(settings, "number_depth")
-        col.prop(settings, "one_offset")
 
         layout.separator()
         layout.operator("object.dice_gen_update", text="Regenerate Dice")
