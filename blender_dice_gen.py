@@ -918,9 +918,8 @@ def create_svg_mesh(context, filepath, scale, depth, name):
         current_dimension = current_dimension if current_dimension else 1
         uniform_scale = target_dimension / current_dimension
 
-        curve_obj.scale = (uniform_scale, uniform_scale, 1)
-
         mesh = curve_obj.to_mesh().copy()
+        mesh.transform(Matrix.Diagonal((uniform_scale, uniform_scale, 1, 1)))
         new_obj = object_data_add(context, mesh, operator=None)
         mesh_objects.append(new_obj)
 
