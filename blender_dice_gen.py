@@ -1,6 +1,7 @@
 import math
 import bpy
 import os
+import bmesh
 from typing import List
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
@@ -658,8 +659,70 @@ class D100Mesh(SquashedPentagonalTrapezohedron):
         return [f'{str((i + 1) % 10)}0' for i in range(10)]
 
 
+class RoundDice(Mesh):
+
+    def __init__(self, name, size, sides, font_scale, number_radius_factor=0.96):
+        super().__init__(name)
+        self.size = size
+        self.sides = sides
+        self.radius = size / 2
+        self.base_font_scale = font_scale
+        self.number_radius = self.radius * number_radius_factor
+        self._number_points = fibonacci_sphere(self.sides, self.number_radius)
+
+    def create(self, context):
+        mesh = bpy.data.meshes.new(self.name)
+        bm = bmesh.new()
+        bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=self.radius)
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+
+        self.dice_mesh = object_data_add(context, mesh, operator=None)
+        self.dice_mesh.name = self.name
+        return self.dice_mesh
+
+    def get_numbers(self):
+        return numbers(self.sides)
+
+    def get_number_locations(self):
+        return [(v.x, v.y, v.z) for v in self._number_points]
+
+    def get_number_rotations(self):
+        return [p.normalized().to_track_quat('Z', 'Y').to_euler() for p in self._number_points]
+
+
+class D50Round(RoundDice):
+
+    def __init__(self, name, size):
+        super().__init__(name, size, 50, 0.22)
+
+
+class D100Round(RoundDice):
+
+    def __init__(self, name, size):
+        super().__init__(name, size, 100, 0.18)
+
+
 def numbers(n: int) -> List[str]:
     return [str(i + 1) for i in range(n)]
+
+
+def fibonacci_sphere(samples: int, radius: float) -> List[Vector]:
+    offset = 2 / samples
+    increment = math.pi * (3 - math.sqrt(5))
+
+    points = []
+    for i in range(samples):
+        y = ((i * offset) - 1) + (offset / 2)
+        r = math.sqrt(1 - y * y)
+        phi = i * increment
+
+        x = math.cos(phi) * r
+        z = math.sin(phi) * r
+        points.append(Vector((x * radius, y * radius, z * radius)))
+
+    return points
 
 
 def set_origin(o, v):
@@ -1583,6 +1646,56 @@ class D100Generator(bpy.types.Operator):
                                  number_v_offset=self.number_v_offset)
 
 
+class D50RoundGenerator(bpy.types.Operator):
+    """Generate a round D50"""
+    bl_idname = 'mesh.d50_round_add'
+    bl_label = 'D50 Round'
+    bl_description = 'Generate a round d50 dice'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    size: Face2FaceProperty(20)
+    add_numbers: AddNumbersProperty
+    number_scale: NumberScaleProperty
+    number_depth: NumberDepthProperty
+    font_path: FontPathProperty
+    one_offset: OneOffsetProperty
+    number_indicator_type: NumberIndicatorTypeProperty()
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
+
+    def execute(self, context):
+        return execute_generator(self, context, D50Round, 'd50Round')
+
+
+class D100RoundGenerator(bpy.types.Operator):
+    """Generate a round D100"""
+    bl_idname = 'mesh.d100_round_add'
+    bl_label = 'D100 Round'
+    bl_description = 'Generate a round d100 dice'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    size: Face2FaceProperty(20)
+    add_numbers: AddNumbersProperty
+    number_scale: NumberScaleProperty
+    number_depth: NumberDepthProperty
+    font_path: FontPathProperty
+    one_offset: OneOffsetProperty
+    number_indicator_type: NumberIndicatorTypeProperty()
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
+
+    def execute(self, context):
+        return execute_generator(self, context, D100Round, 'd100Round')
+
+
 class OBJECT_OT_dice_gen_update(bpy.types.Operator):
     bl_idname = "object.dice_gen_update"
     bl_label = "Update Dice Numbers"
@@ -1627,6 +1740,8 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             "Icosahedron": Icosahedron,
             "D10Mesh": D10Mesh,
             "D100Mesh": D100Mesh,
+            "D50Round": D50Round,
+            "D100Round": D100Round,
         }
 
         mesh_cls = mesh_cls_map.get(die_type)
@@ -1776,6 +1891,8 @@ class MeshDiceAdd(Menu):
         layout.operator('mesh.d8_add', text='D8 Octahedron')
         layout.operator('mesh.d10_add', text='D10 Trapezohedron')
         layout.operator('mesh.d100_add', text='D100 Trapezohedron')
+        layout.operator('mesh.d50_round_add', text='D50 Round')
+        layout.operator('mesh.d100_round_add', text='D100 Round')
         layout.operator('mesh.d12_add', text='D12 Dodecahedron')
         layout.operator('mesh.d20_add', text='D20 Icosahedron')
 
@@ -1799,6 +1916,8 @@ classes = [
     D8Generator,
     D10Generator,
     D100Generator,
+    D50RoundGenerator,
+    D100RoundGenerator,
     D12Generator,
     D20Generator,
     OBJECT_OT_dice_gen_update,
