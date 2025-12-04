@@ -5,7 +5,7 @@ from typing import List
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
 from bpy.types import Menu
-from bpy.props import FloatProperty, BoolProperty, StringProperty, EnumProperty, PointerProperty
+from bpy.props import FloatProperty, BoolProperty, StringProperty, EnumProperty, PointerProperty, IntProperty
 from bpy_extras.object_utils import object_data_add
 
 bl_info = {
@@ -102,7 +102,7 @@ class Mesh:
     def create_numbers(self, context, size, number_scale, number_depth, font_path, one_offset,
                        number_indicator_type=NUMBER_IND_NONE, period_indicator_scale=1, period_indicator_space=1,
                        bar_indicator_height=1, bar_indicator_width=1, bar_indicator_space=1,
-                       center_bar=True):
+                       center_bar=True, custom_image_face=0, custom_image_path='', custom_image_scale=1):
         numbers = self.get_numbers()
         locations = self.get_number_locations()
         rotations = self.get_number_rotations()
@@ -112,7 +112,8 @@ class Mesh:
         numbers_object = create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth,
                                         number_indicator_type, period_indicator_scale, period_indicator_space,
                                         bar_indicator_height, bar_indicator_width, bar_indicator_space,
-                                        center_bar, one_offset)
+                                        center_bar, one_offset, custom_image_face=custom_image_face,
+                                        custom_image_path=custom_image_path, custom_image_scale=custom_image_scale)
 
         if numbers_object is not None:
             numbers_object.name = "dice_numbers"
@@ -795,6 +796,16 @@ def validate_font_path(filepath):
     return filepath
 
 
+def validate_svg_path(filepath):
+    if filepath and not os.path.isfile(filepath):
+        return ''
+
+    if filepath and os.path.splitext(filepath)[1].lower() != '.svg':
+        return ''
+
+    return filepath
+
+
 SETTINGS_ATTRS = [
     "size",
     "font_path",
@@ -816,6 +827,9 @@ SETTINGS_ATTRS = [
     "top_point_height",
     "bottom_point_height",
     "height",
+    "custom_image_path",
+    "custom_image_face",
+    "custom_image_scale",
 ]
 
 
@@ -876,6 +890,47 @@ def apply_boolean_modifier(body_object, numbers_object):
     body_object["dice_numbers_name"] = numbers_object.name
 
 
+def create_svg_mesh(context, filepath, scale, depth, name):
+    existing_objects = set(bpy.data.objects)
+
+    try:
+        bpy.ops.import_curve.svg(filepath=filepath)
+    except (RuntimeError, OSError):
+        return None
+
+    imported_objects = [ob for ob in bpy.data.objects if ob not in existing_objects]
+    curve_objects = [ob for ob in imported_objects if ob.type == 'CURVE']
+
+    if not curve_objects:
+        for ob in imported_objects:
+            bpy.data.objects.remove(ob, do_unlink=True)
+        return None
+
+    mesh_objects = []
+    for curve_obj in curve_objects:
+        curve_obj.data.extrude = depth
+        curve_obj.scale = (scale, scale, scale)
+
+        mesh = curve_obj.to_mesh().copy()
+        new_obj = object_data_add(context, mesh, operator=None)
+        mesh_objects.append(new_obj)
+
+    for curve_obj in curve_objects:
+        bpy.data.objects.remove(curve_obj, do_unlink=True)
+
+    if not mesh_objects:
+        return None
+
+    for ob in imported_objects:
+        if ob in bpy.data.objects:
+            bpy.data.objects.remove(ob, do_unlink=True)
+
+    svg_mesh = join(mesh_objects)
+    svg_mesh.name = name
+    apply_transform(svg_mesh, use_scale=True)
+    return svg_mesh
+
+
 def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
     # load the font
     font = get_font(font_path)
@@ -901,14 +956,17 @@ def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
 
 def create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth, number_indicator_type,
                    period_indicator_scale, period_indicator_space, bar_indicator_height, bar_indicator_width,
-                   bar_indicator_space, center_bar, one_offset):
+                   bar_indicator_space, center_bar, one_offset, custom_image_face=0, custom_image_path='',
+                   custom_image_scale=1):
     number_objs = []
     # create the number meshes
     for i in range(len(locations)):
         number_object = create_number(context, numbers[i], font_path, font_size, number_depth, locations[i],
                                       rotations[i], number_indicator_type, period_indicator_scale,
                                       period_indicator_space, bar_indicator_height, bar_indicator_width,
-                                      bar_indicator_space, center_bar, one_offset)
+                                      bar_indicator_space, center_bar, one_offset,
+                                      custom_image_face=custom_image_face, custom_image_path=custom_image_path,
+                                      custom_image_scale=custom_image_scale, index=i)
         number_objs.append(number_object)
 
     # join the numbers into a single object
@@ -922,67 +980,78 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_size,
 
 def create_number(context, number, font_path, font_size, number_depth, location, rotation, number_indicator_type,
                   period_indicator_scale, period_indicator_space, bar_indicator_height, bar_indicator_width,
-                  bar_indicator_space, center_bar, one_offset):
+                  bar_indicator_space, center_bar, one_offset, custom_image_face=0, custom_image_path='',
+                  custom_image_scale=1, index=0):
     """
     Create a number mesh that will be used in a boolean modifier
     """
-    # add number
-    mesh_object = create_text_mesh(context, number, font_path, font_size, f'number_{number}', number_depth)
+    use_custom_image = custom_image_path and (custom_image_face == index + 1)
+
+    mesh_object = None
+
+    if use_custom_image:
+        mesh_object = create_svg_mesh(context, custom_image_path, font_size * custom_image_scale, number_depth,
+                                      f'custom_image_{index + 1}')
+
+    if mesh_object is None:
+        # add number
+        mesh_object = create_text_mesh(context, number, font_path, font_size, f'number_{number}', number_depth)
 
     # set origin to bounding box center
     set_origin_center_bounds(mesh_object)
 
-    if number == '1':
-        if one_offset > 0:
-            number_width = mesh_object.dimensions.x
-            new_origin = Vector((mesh_object.location.x + number_width * one_offset, mesh_object.location.y,
-                                 mesh_object.location.z))
-            set_origin(mesh_object, new_origin)
-            pass
-    elif number in ('6', '9'):
-        if number_indicator_type == NUMBER_IND_PERIOD:
-            p_obj = create_text_mesh(context, '.', font_path, font_size * period_indicator_scale, f'period_{number}',
-                                     number_depth)
+    if not use_custom_image:
+        if number == '1':
+            if one_offset > 0:
+                number_width = mesh_object.dimensions.x
+                new_origin = Vector((mesh_object.location.x + number_width * one_offset, mesh_object.location.y,
+                                     mesh_object.location.z))
+                set_origin(mesh_object, new_origin)
+                pass
+        elif number in ('6', '9'):
+            if number_indicator_type == NUMBER_IND_PERIOD:
+                p_obj = create_text_mesh(context, '.', font_path, font_size * period_indicator_scale, f'period_{number}',
+                                         number_depth)
 
-            # move origin of period to the bottom left corner of the mesh
-            set_origin_min_bounds(p_obj)
+                # move origin of period to the bottom left corner of the mesh
+                set_origin_min_bounds(p_obj)
 
-            space = (1 / 20) * font_size * period_indicator_space
+                space = (1 / 20) * font_size * period_indicator_space
 
-            # move period to the bottom right of the number
-            p_obj.location = Vector((mesh_object.location.x + (mesh_object.dimensions.x / 2) + space,
-                                     mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
+                # move period to the bottom right of the number
+                p_obj.location = Vector((mesh_object.location.x + (mesh_object.dimensions.x / 2) + space,
+                                         mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
 
-            # join the period to the number
-            mesh_object = join([mesh_object, p_obj])
-        elif number_indicator_type == NUMBER_IND_BAR:
-            # create a simple rectangle
-            bar_width = mesh_object.dimensions.x * bar_indicator_width
-            bar_height = (1 / 15) * font_size * bar_indicator_height
-            bar_space = (1 / 20) * font_size * bar_indicator_space
-            bar_obj = create_mesh(context,
-                                  [(-bar_width / 2, -bar_space, number_depth),
-                                   (bar_width / 2, -bar_space, number_depth),
-                                   (-bar_width / 2, -bar_space - bar_height, number_depth),
-                                   (bar_width / 2, -bar_space - bar_height, number_depth),
-                                   (-bar_width / 2, -bar_space, -number_depth),
-                                   (bar_width / 2, -bar_space, -number_depth),
-                                   (-bar_width / 2, -bar_space - bar_height, -number_depth),
-                                   (bar_width / 2, -bar_space - bar_height, -number_depth)],
-                                  [[0, 1, 3, 2], [2, 3, 7, 6], [3, 1, 5, 7], [1, 0, 4, 5], [0, 2, 6, 4], [4, 6, 7, 5]],
-                                  'bar_indicator')
+                # join the period to the number
+                mesh_object = join([mesh_object, p_obj])
+            elif number_indicator_type == NUMBER_IND_BAR:
+                # create a simple rectangle
+                bar_width = mesh_object.dimensions.x * bar_indicator_width
+                bar_height = (1 / 15) * font_size * bar_indicator_height
+                bar_space = (1 / 20) * font_size * bar_indicator_space
+                bar_obj = create_mesh(context,
+                                      [(-bar_width / 2, -bar_space, number_depth),
+                                       (bar_width / 2, -bar_space, number_depth),
+                                       (-bar_width / 2, -bar_space - bar_height, number_depth),
+                                       (bar_width / 2, -bar_space - bar_height, number_depth),
+                                       (-bar_width / 2, -bar_space, -number_depth),
+                                       (bar_width / 2, -bar_space, -number_depth),
+                                       (-bar_width / 2, -bar_space - bar_height, -number_depth),
+                                       (bar_width / 2, -bar_space - bar_height, -number_depth)],
+                                      [[0, 1, 3, 2], [2, 3, 7, 6], [3, 1, 5, 7], [1, 0, 4, 5], [0, 2, 6, 4], [4, 6, 7, 5]],
+                                      'bar_indicator')
 
-            # move bar below the number
-            bar_obj.location = Vector(
-                (mesh_object.location.x, mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
+                # move bar below the number
+                bar_obj.location = Vector(
+                    (mesh_object.location.x, mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
 
-            # join the bar to the number
-            mesh_object = join([mesh_object, bar_obj])
+                # join the bar to the number
+                mesh_object = join([mesh_object, bar_obj])
 
-            # recenter the mesh
-            if center_bar:
-                mesh_object.location = Vector((0, 0, 0))
-                set_origin_center_bounds(mesh_object)
+                # recenter the mesh
+                if center_bar:
+                    mesh_object.location = Vector((0, 0, 0))
+                    set_origin_center_bounds(mesh_object)
 
     mesh_object.location.x = location[0]
     mesh_object.location.y = location[1]
@@ -1001,6 +1070,7 @@ def create_number(context, number, font_path, font_size, number_depth, location,
 def execute_generator(op, context, mesh_cls, name, **kwargs):
     # set font to emtpy if it's not a ttf file
     op.font_path = validate_font_path(op.font_path)
+    op.custom_image_path = validate_svg_path(op.custom_image_path)
 
     # create the cube mesh
     die = mesh_cls("dice_body", op.size, **kwargs)
@@ -1014,13 +1084,17 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     if op.add_numbers:
         if op.number_indicator_type == NUMBER_IND_NONE:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset
+                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
+                custom_image_face=op.custom_image_face, custom_image_path=op.custom_image_path,
+                custom_image_scale=op.custom_image_scale
             )
         else:
             numbers_object = die.create_numbers(
                 context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
                 op.number_indicator_type, op.period_indicator_scale, op.period_indicator_space,
-                op.bar_indicator_height, op.bar_indicator_width, op.bar_indicator_space, op.center_bar
+                op.bar_indicator_height, op.bar_indicator_width, op.bar_indicator_space, op.center_bar,
+                custom_image_face=op.custom_image_face, custom_image_path=op.custom_image_path,
+                custom_image_scale=op.custom_image_scale
             )
 
     target_object = numbers_object or die_obj
@@ -1078,6 +1152,31 @@ FontPathProperty = StringProperty(
     description='Number font',
     maxlen=1024,
     subtype='FILE_PATH'
+)
+
+CustomImagePathProperty = StringProperty(
+    name='Custom Image (SVG)',
+    description='SVG file to engrave on a selected face',
+    maxlen=1024,
+    subtype='FILE_PATH'
+)
+
+CustomImageFaceProperty = IntProperty(
+    name='Custom Image Face',
+    description='1-based face index to replace with the custom image (0 disables the feature)',
+    min=0,
+    soft_min=0,
+    default=0
+)
+
+CustomImageScaleProperty = FloatProperty(
+    name='Custom Image Scale',
+    description='Scale multiplier for the custom image relative to the number size',
+    min=0.01,
+    soft_min=0.01,
+    max=10,
+    soft_max=10,
+    default=1
 )
 
 OneOffsetProperty = FloatProperty(
@@ -1184,6 +1283,12 @@ class DiceGenSettings(bpy.types.PropertyGroup):
     )
 
     font_path: FontPathProperty
+
+    custom_image_path: CustomImagePathProperty
+
+    custom_image_face: CustomImageFaceProperty
+
+    custom_image_scale: CustomImageScaleProperty
 
     number_scale: NumberScaleProperty
 
@@ -1300,6 +1405,12 @@ class D4Generator(bpy.types.Operator):
 
     font_path: FontPathProperty
 
+    custom_image_path: CustomImagePathProperty
+
+    custom_image_face: CustomImageFaceProperty
+
+    custom_image_scale: CustomImageScaleProperty
+
     one_offset: OneOffsetProperty
 
     number_center_offset: FloatProperty(
@@ -1354,6 +1465,9 @@ class D4CrystalGenerator(bpy.types.Operator):
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
     one_offset: OneOffsetProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, D4Crystal, 'd4Crystal', base_height=self.base_height,
@@ -1406,6 +1520,9 @@ class D4ShardGenerator(bpy.types.Operator):
     font_path: FontPathProperty
     one_offset: OneOffsetProperty
     number_v_offset: NumberVOffsetProperty(0.7)
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, D4Shard, 'd4Shard', top_point_height=self.top_point_height,
@@ -1432,6 +1549,9 @@ class D6Generator(bpy.types.Operator):
     bar_indicator_width: BarIndicatorWidthProperty
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, Cube, 'd6')
@@ -1457,6 +1577,9 @@ class D8Generator(bpy.types.Operator):
     bar_indicator_width: BarIndicatorWidthProperty
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, Octahedron, 'd8')
@@ -1482,6 +1605,9 @@ class D12Generator(bpy.types.Operator):
     bar_indicator_width: BarIndicatorWidthProperty
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, Dodecahedron, 'd12')
@@ -1507,6 +1633,9 @@ class D20Generator(bpy.types.Operator):
     bar_indicator_width: BarIndicatorWidthProperty
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, Icosahedron, 'd20')
@@ -1544,6 +1673,9 @@ class D10Generator(bpy.types.Operator):
     bar_indicator_width: BarIndicatorWidthProperty
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, D10Mesh, 'd10', height=self.height,
@@ -1577,6 +1709,9 @@ class D100Generator(bpy.types.Operator):
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
     number_v_offset: NumberVOffsetProperty(1 / 3)
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty
+    custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
         return execute_generator(self, context, D100Mesh, 'd100', height=self.height,
@@ -1656,6 +1791,8 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
         die.dice_mesh = body_obj
 
         font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
+        custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
+        settings_values["custom_image_path"] = custom_image_path
 
         new_numbers_obj = None
 
@@ -1676,6 +1813,9 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["bar_indicator_width"],
                         settings_values["bar_indicator_space"],
                         settings_values["center_bar"],
+                        settings_values["custom_image_face"],
+                        custom_image_path,
+                        settings_values["custom_image_scale"],
                     )
                 else:
                     new_numbers_obj = die.create_numbers(
@@ -1685,6 +1825,9 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_depth"],
                         font_path,
                         settings_values["one_offset"],
+                        custom_image_face=settings_values["custom_image_face"],
+                        custom_image_path=custom_image_path,
+                        custom_image_scale=settings_values["custom_image_scale"],
                     )
             except Exception as exc:
                 self.report({'ERROR'}, f"Failed to regenerate numbers: {exc}")
@@ -1751,6 +1894,9 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
 
         col = layout.column()
         col.prop(settings, "font_path")
+        col.prop(settings, "custom_image_path")
+        col.prop(settings, "custom_image_face")
+        col.prop(settings, "custom_image_scale")
         col.prop(settings, "number_scale")
         col.prop(settings, "number_depth")
 
