@@ -922,7 +922,7 @@ def create_svg_mesh(context, filepath, scale, depth, name):
         return None
 
     for ob in imported_objects:
-        if ob in bpy.data.objects:
+        if ob.name in bpy.data.objects:
             bpy.data.objects.remove(ob, do_unlink=True)
 
     svg_mesh = join(mesh_objects)
