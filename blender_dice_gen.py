@@ -661,68 +661,111 @@ class D100Mesh(SquashedPentagonalTrapezohedron):
 
 class RoundDice(Mesh):
 
-    def __init__(self, name, size, sides, font_scale, number_radius_factor=0.96):
+    def __init__(self, name, size, segments, bands, font_scale):
         super().__init__(name)
         self.size = size
-        self.sides = sides
+        self.segments = segments
+        self.bands = bands
         self.radius = size / 2
         self.base_font_scale = font_scale
-        self.number_radius = self.radius * number_radius_factor
-        self._number_points = fibonacci_sphere(self.sides, self.number_radius)
 
-    def create(self, context):
-        mesh = bpy.data.meshes.new(self.name)
-        bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=self.radius)
-        bm.to_mesh(mesh)
-        bm.free()
-        mesh.update()
+        self.vertices, self.faces = self._build_faceted_sphere()
+        self.face_centers = [self._face_center(face) for face in self.faces]
+        self.face_normals = [self._face_normal(face) for face in self.faces]
 
-        self.dice_mesh = object_data_add(context, mesh, operator=None)
-        self.dice_mesh.name = self.name
-        return self.dice_mesh
+    def _build_faceted_sphere(self):
+        vertices = []
+        faces = []
+        delta = math.pi / (self.bands + 2)
+        ring_count = self.bands + 1
+        ring_indices = []
+
+        for ring in range(ring_count):
+            phi = HALF_PI - ((ring + 1) * delta)
+            y = self.radius * math.sin(phi)
+            r = self.radius * math.cos(phi)
+            current_ring = []
+            for seg in range(self.segments):
+                theta = (2 * math.pi * seg) / self.segments
+                x = r * math.cos(theta)
+                z = r * math.sin(theta)
+                current_ring.append(len(vertices))
+                vertices.append((x, y, z))
+            ring_indices.append(current_ring)
+
+        top_index = len(vertices)
+        vertices.append((0, self.radius, 0))
+        bottom_index = len(vertices)
+        vertices.append((0, -self.radius, 0))
+
+        # Top cap
+        top_ring = ring_indices[0]
+        for seg in range(self.segments):
+            faces.append([top_index, top_ring[seg], top_ring[(seg + 1) % self.segments]])
+
+        # Middle bands
+        for ring in range(ring_count - 1):
+            upper = ring_indices[ring]
+            lower = ring_indices[ring + 1]
+            for seg in range(self.segments):
+                next_seg = (seg + 1) % self.segments
+                faces.append([
+                    upper[seg],
+                    upper[next_seg],
+                    lower[next_seg],
+                    lower[seg],
+                ])
+
+        # Bottom cap
+        bottom_ring = ring_indices[-1]
+        for seg in range(self.segments):
+            next_seg = (seg + 1) % self.segments
+            faces.append([bottom_index, bottom_ring[next_seg], bottom_ring[seg]])
+
+        return vertices, faces
+
+    def _face_center(self, face):
+        vectors = [Vector(self.vertices[i]) for i in face]
+        center = sum(vectors, Vector()) / len(vectors)
+        return (center.x, center.y, center.z)
+
+    def _face_normal(self, face):
+        if len(face) < 3:
+            return Vector((0, 1, 0))
+        a, b, c = (Vector(self.vertices[i]) for i in face[:3])
+        normal = (b - a).cross(c - a)
+        if normal.length == 0:
+            return Vector((0, 1, 0))
+        center = sum((Vector(self.vertices[i]) for i in face), Vector()) / len(face)
+        normal = normal.normalized()
+        if normal.dot(center) < 0:
+            normal.negate()
+        return normal
 
     def get_numbers(self):
-        return numbers(self.sides)
+        return numbers(len(self.faces))
 
     def get_number_locations(self):
-        return [(v.x, v.y, v.z) for v in self._number_points]
+        return self.face_centers
 
     def get_number_rotations(self):
-        return [p.normalized().to_track_quat('Z', 'Y').to_euler() for p in self._number_points]
+        return [normal.to_track_quat('Z', 'Y').to_euler() for normal in self.face_normals]
 
 
 class D50Round(RoundDice):
 
     def __init__(self, name, size):
-        super().__init__(name, size, 50, 0.22)
+        super().__init__(name, size, segments=10, bands=3, font_scale=0.2)
 
 
 class D100Round(RoundDice):
 
     def __init__(self, name, size):
-        super().__init__(name, size, 100, 0.18)
+        super().__init__(name, size, segments=10, bands=8, font_scale=0.18)
 
 
 def numbers(n: int) -> List[str]:
     return [str(i + 1) for i in range(n)]
-
-
-def fibonacci_sphere(samples: int, radius: float) -> List[Vector]:
-    offset = 2 / samples
-    increment = math.pi * (3 - math.sqrt(5))
-
-    points = []
-    for i in range(samples):
-        y = ((i * offset) - 1) + (offset / 2)
-        r = math.sqrt(1 - y * y)
-        phi = i * increment
-
-        x = math.cos(phi) * r
-        z = math.sin(phi) * r
-        points.append(Vector((x * radius, y * radius, z * radius)))
-
-    return points
 
 
 def set_origin(o, v):
