@@ -115,7 +115,11 @@ class Mesh:
                                         center_bar, one_offset)
 
         if numbers_object is not None:
+            numbers_object.name = "dice_numbers"
             apply_boolean_modifier(self.dice_mesh, numbers_object)
+            return numbers_object
+
+        return None
 
 
 class Tetrahedron(Mesh):
@@ -788,6 +792,59 @@ def validate_font_path(filepath):
     return filepath
 
 
+SETTINGS_ATTRS = [
+    "size",
+    "font_path",
+    "number_scale",
+    "number_depth",
+    "one_offset",
+    "add_numbers",
+    "number_indicator_type",
+    "period_indicator_scale",
+    "period_indicator_space",
+    "bar_indicator_height",
+    "bar_indicator_width",
+    "bar_indicator_space",
+    "center_bar",
+    "number_v_offset",
+    "number_center_offset",
+    "base_height",
+    "point_height",
+    "top_point_height",
+    "bottom_point_height",
+    "height",
+]
+
+
+def collect_settings_from_op(op, settings_template):
+    return {attr: getattr(op, attr, getattr(settings_template, attr)) for attr in SETTINGS_ATTRS}
+
+
+def apply_settings(settings_obj, values):
+    for key, value in values.items():
+        setattr(settings_obj, key, value)
+
+
+def snapshot_settings(settings_obj):
+    return {attr: getattr(settings_obj, attr) for attr in SETTINGS_ATTRS}
+
+
+def resolve_settings_owner(obj):
+    if obj is None or not hasattr(obj, "dice_gen_settings"):
+        return None
+
+    if obj.get("dice_gen_type") is not None:
+        return obj
+
+    numbers_name = obj.get("dice_numbers_name")
+    if numbers_name and numbers_name in bpy.data.objects:
+        numbers_obj = bpy.data.objects[numbers_name]
+        if numbers_obj.get("dice_gen_type") is not None:
+            return numbers_obj
+
+    return None
+
+
 def get_font(filepath):
     if filepath:
         bpy.data.fonts.load(filepath=filepath, check_existing=True)
@@ -940,42 +997,32 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     op.font_path = validate_font_path(op.font_path)
 
     # create the cube mesh
-    die = mesh_cls(name, op.size, **kwargs)
+    die = mesh_cls("dice_body", op.size, **kwargs)
     die_obj = die.create(context)
 
-    # store type + settings on the object so we can reuse them later
-    die_obj["dice_gen_type"] = mesh_cls.__name__
+    settings_template = die_obj.dice_gen_settings
+    settings_values = collect_settings_from_op(op, settings_template)
 
-    settings = die_obj.dice_gen_settings
-    settings.size = op.size
-    settings.font_path = op.font_path
-    settings.number_scale = op.number_scale
-    settings.number_depth = op.number_depth
-    settings.one_offset = op.one_offset
-    settings.add_numbers = op.add_numbers
-    settings.number_indicator_type = getattr(op, "number_indicator_type", settings.number_indicator_type)
-    settings.period_indicator_scale = getattr(op, "period_indicator_scale", settings.period_indicator_scale)
-    settings.period_indicator_space = getattr(op, "period_indicator_space", settings.period_indicator_space)
-    settings.bar_indicator_height = getattr(op, "bar_indicator_height", settings.bar_indicator_height)
-    settings.bar_indicator_width = getattr(op, "bar_indicator_width", settings.bar_indicator_width)
-    settings.bar_indicator_space = getattr(op, "bar_indicator_space", settings.bar_indicator_space)
-    settings.center_bar = getattr(op, "center_bar", settings.center_bar)
-    settings.number_v_offset = getattr(op, "number_v_offset", settings.number_v_offset)
-    settings.number_center_offset = getattr(op, "number_center_offset", settings.number_center_offset)
-    settings.base_height = getattr(op, "base_height", settings.base_height)
-    settings.point_height = getattr(op, "point_height", settings.point_height)
-    settings.top_point_height = getattr(op, "top_point_height", settings.top_point_height)
-    settings.bottom_point_height = getattr(op, "bottom_point_height", settings.bottom_point_height)
-    settings.height = getattr(op, "height", settings.height)
-
+    numbers_object = None
     # create number curves
     if op.add_numbers:
         if op.number_indicator_type == NUMBER_IND_NONE:
-            die.create_numbers(context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset)
+            numbers_object = die.create_numbers(
+                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset
+            )
         else:
-            die.create_numbers(context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
-                               op.number_indicator_type, op.period_indicator_scale, op.period_indicator_space,
-                               op.bar_indicator_height, op.bar_indicator_width, op.bar_indicator_space, op.center_bar)
+            numbers_object = die.create_numbers(
+                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
+                op.number_indicator_type, op.period_indicator_scale, op.period_indicator_space,
+                op.bar_indicator_height, op.bar_indicator_width, op.bar_indicator_space, op.center_bar
+            )
+
+    target_object = numbers_object or die_obj
+    target_object["dice_gen_type"] = mesh_cls.__name__
+    if numbers_object is not None:
+        numbers_object["dice_body_name"] = die_obj.name
+
+    apply_settings(target_object.dice_gen_settings, settings_values)
 
     return {'FINISHED'}
 
@@ -1537,29 +1584,37 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
 
     def execute(self, context):
         ob = context.object
-        if ob is None:
-            self.report({'ERROR'}, "No active object")
-            return {'CANCELLED'}
+        settings_owner = resolve_settings_owner(ob)
 
-        if not hasattr(ob, "dice_gen_settings"):
+        if settings_owner is None:
             self.report({'ERROR'}, "Object has no dice settings")
             return {'CANCELLED'}
 
-        settings = ob.dice_gen_settings
-        die_type = ob.get("dice_gen_type")
-        numbers_name = ob.get("dice_numbers_name")
+        settings_values = snapshot_settings(settings_owner.dice_gen_settings)
+        die_type = settings_owner.get("dice_gen_type")
 
-        if die_type is None:
+        numbers_obj = None
+        if settings_owner.get("dice_body_name"):
+            numbers_obj = settings_owner
+        elif ob.get("dice_numbers_name"):
+            numbers_obj = bpy.data.objects.get(ob.get("dice_numbers_name"))
+
+        body_obj = None
+        if settings_owner.get("dice_body_name"):
+            body_obj = bpy.data.objects.get(settings_owner.get("dice_body_name"))
+        else:
+            body_obj = ob
+
+        if body_obj is None or die_type is None:
             self.report({'ERROR'}, "Object is not a generated die")
             return {'CANCELLED'}
 
-        if numbers_name and numbers_name in bpy.data.objects:
-            num_obj = bpy.data.objects[numbers_name]
-            bpy.data.objects.remove(num_obj, do_unlink=True)
+        if numbers_obj and numbers_obj.name in bpy.data.objects:
+            bpy.data.objects.remove(numbers_obj, do_unlink=True)
 
-        for mod in list(ob.modifiers):
+        for mod in list(body_obj.modifiers):
             if mod.type == 'BOOLEAN' and mod.name == 'boolean':
-                ob.modifiers.remove(mod)
+                body_obj.modifiers.remove(mod)
 
         mesh_cls_map = {
             "Tetrahedron": Tetrahedron,
@@ -1578,38 +1633,65 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             self.report({'ERROR'}, f"Unknown dice type: {die_type}")
             return {'CANCELLED'}
 
-        size = settings.size
+        size = settings_values["size"]
 
         if die_type == "Tetrahedron":
-            die = mesh_cls(ob.name, size, settings.number_center_offset)
+            die = mesh_cls(body_obj.name, size, settings_values["number_center_offset"])
         elif die_type == "D4Crystal":
-            die = mesh_cls(ob.name, size, settings.base_height, settings.point_height)
+            die = mesh_cls(body_obj.name, size, settings_values["base_height"], settings_values["point_height"])
         elif die_type == "D4Shard":
-            die = mesh_cls(ob.name, size, settings.top_point_height, settings.bottom_point_height,
-                           settings.number_v_offset)
+            die = mesh_cls(
+                body_obj.name,
+                size,
+                settings_values["top_point_height"],
+                settings_values["bottom_point_height"],
+                settings_values["number_v_offset"],
+            )
         elif die_type in ("D10Mesh", "D100Mesh"):
-            die = mesh_cls(ob.name, size, settings.height, settings.number_v_offset)
+            die = mesh_cls(body_obj.name, size, settings_values["height"], settings_values["number_v_offset"])
         else:
-            die = mesh_cls(ob.name, size)
+            die = mesh_cls(body_obj.name, size)
 
-        die.dice_mesh = ob
+        die.dice_mesh = body_obj
 
-        font_path = validate_font_path(settings.font_path) if settings.font_path else ""
+        font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
 
-        if settings.add_numbers:
-            if settings.number_indicator_type != NUMBER_IND_NONE:
-                die.create_numbers(
-                    context, size, settings.number_scale, settings.number_depth,
-                    font_path, settings.one_offset, settings.number_indicator_type,
-                    settings.period_indicator_scale, settings.period_indicator_space,
-                    settings.bar_indicator_height, settings.bar_indicator_width,
-                    settings.bar_indicator_space, settings.center_bar,
+        new_numbers_obj = None
+
+        if settings_values["add_numbers"]:
+            if settings_values["number_indicator_type"] != NUMBER_IND_NONE:
+                new_numbers_obj = die.create_numbers(
+                    context,
+                    size,
+                    settings_values["number_scale"],
+                    settings_values["number_depth"],
+                    font_path,
+                    settings_values["one_offset"],
+                    settings_values["number_indicator_type"],
+                    settings_values["period_indicator_scale"],
+                    settings_values["period_indicator_space"],
+                    settings_values["bar_indicator_height"],
+                    settings_values["bar_indicator_width"],
+                    settings_values["bar_indicator_space"],
+                    settings_values["center_bar"],
                 )
             else:
-                die.create_numbers(
-                    context, size, settings.number_scale, settings.number_depth,
-                    font_path, settings.one_offset,
+                new_numbers_obj = die.create_numbers(
+                    context,
+                    size,
+                    settings_values["number_scale"],
+                    settings_values["number_depth"],
+                    font_path,
+                    settings_values["one_offset"],
                 )
+
+        if new_numbers_obj is not None:
+            new_numbers_obj["dice_body_name"] = body_obj.name
+            new_numbers_obj["dice_gen_type"] = die_type
+            apply_settings(new_numbers_obj.dice_gen_settings, settings_values)
+        else:
+            body_obj["dice_gen_type"] = die_type
+            apply_settings(body_obj.dice_gen_settings, settings_values)
 
         return {'FINISHED'}
 
@@ -1623,13 +1705,16 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        ob = context.object
-        return ob is not None and hasattr(ob, "dice_gen_settings") and ob.get("dice_gen_type") is not None
+        return resolve_settings_owner(context.object) is not None
 
     def draw(self, context):
         layout = self.layout
-        ob = context.object
-        settings = ob.dice_gen_settings
+        settings_owner = resolve_settings_owner(context.object)
+        if settings_owner is None:
+            layout.label(text="No dice settings found")
+            return
+
+        settings = settings_owner.dice_gen_settings
 
         col = layout.column()
         col.prop(settings, "size")
