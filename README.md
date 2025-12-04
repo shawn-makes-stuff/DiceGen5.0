@@ -14,6 +14,10 @@ The add-on will create 2 objects, a blank dice mesh and the numbers. The blank d
 
 Go to the [wiki](https://github.com/Longi94/blender-dice-gen/wiki/Properties) to see what each property does in detail.
 
+### Engraving a custom image
+
+Use the **Custom Image (SVG)**, **Custom Image Face**, and **Custom Image Scale** properties to replace one of the generated numbers with your own SVG artwork. The image will be imported, scaled alongside the numbers, and extruded to match the configured number depth.
+
 ## Supported dice
 
 Create an issue if you'd like a new dice type to be added.
