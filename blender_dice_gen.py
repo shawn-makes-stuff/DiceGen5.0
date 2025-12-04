@@ -899,11 +899,14 @@ def create_svg_mesh(context, filepath, scale, depth, name):
         return None
 
     imported_objects = [ob for ob in bpy.data.objects if ob not in existing_objects]
-    curve_objects = [ob for ob in imported_objects if ob.type == 'CURVE']
+    imported_object_names = [ob.name for ob in imported_objects]
+    curve_object_names = [ob.name for ob in imported_objects if ob.type == 'CURVE']
+    curve_objects = [bpy.data.objects[name] for name in curve_object_names if name in bpy.data.objects]
 
     if not curve_objects:
-        for ob in imported_objects:
-            bpy.data.objects.remove(ob, do_unlink=True)
+        for obj_name in imported_object_names:
+            if obj_name in bpy.data.objects:
+                bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
         return None
 
     mesh_objects = []
@@ -915,15 +918,16 @@ def create_svg_mesh(context, filepath, scale, depth, name):
         new_obj = object_data_add(context, mesh, operator=None)
         mesh_objects.append(new_obj)
 
-    for curve_obj in curve_objects:
-        bpy.data.objects.remove(curve_obj, do_unlink=True)
+    for curve_name in curve_object_names:
+        if curve_name in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[curve_name], do_unlink=True)
 
     if not mesh_objects:
         return None
 
-    for ob in imported_objects:
-        if ob.name in bpy.data.objects:
-            bpy.data.objects.remove(ob, do_unlink=True)
+    for obj_name in imported_object_names:
+        if obj_name in bpy.data.objects:
+            bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
 
     svg_mesh = join(mesh_objects)
     svg_mesh.name = name
