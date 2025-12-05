@@ -675,6 +675,29 @@ def set_origin(o, v):
     mw.translation = mw @ v
 
 
+def _calculate_bounds(vertices):
+    iterator = iter(vertices)
+    try:
+        first_vertex = next(iterator)
+    except StopIteration:
+        return None
+
+    min_x = max_x = first_vertex.co.x
+    min_y = max_y = first_vertex.co.y
+    min_z = max_z = first_vertex.co.z
+
+    for v in iterator:
+        x, y, z = v.co.x, v.co.y, v.co.z
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+        min_z = min(min_z, z)
+        max_z = max(max_z, z)
+
+    return min_x, max_x, min_y, max_y, min_z, max_z
+
+
 def set_origin_center_bounds(o):
     """
     set an objects origin to the center of its bounding box
@@ -682,15 +705,11 @@ def set_origin_center_bounds(o):
     :return:
     """
     me = o.data
+    bounds = _calculate_bounds(me.vertices)
+    if bounds is None:
+        return
 
-    max_x = max((v.co.x for v in me.vertices))
-    max_y = max((v.co.y for v in me.vertices))
-    max_z = max((v.co.z for v in me.vertices))
-
-    min_x = min((v.co.x for v in me.vertices))
-    min_y = min((v.co.y for v in me.vertices))
-    min_z = min((v.co.z for v in me.vertices))
-
+    min_x, max_x, min_y, max_y, min_z, max_z = bounds
     set_origin(o, Vector(((min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2)))
 
 
@@ -701,12 +720,11 @@ def set_origin_min_bounds(o):
     :return:
     """
     me = o.data
+    bounds = _calculate_bounds(me.vertices)
+    if bounds is None:
+        return
 
-    max_z = max((v.co.z for v in me.vertices))
-    min_x = min((v.co.x for v in me.vertices))
-    min_y = min((v.co.y for v in me.vertices))
-    min_z = min((v.co.z for v in me.vertices))
-
+    min_x, _, min_y, _, min_z, max_z = bounds
     set_origin(o, Vector((min_x, min_y, (min_z + max_z) / 2)))
 
 
