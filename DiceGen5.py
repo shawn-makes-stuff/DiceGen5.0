@@ -984,7 +984,8 @@ def apply_bumpers_to_mesh(mesh_data, bumper_scale):
         use_even_offset=True,
     )
 
-    rim_faces = [face for face in bm.faces if not face.tag]
+    inset_faces = set(inset_result.get("faces", []))
+    rim_faces = [face for face in bm.faces if face not in inset_faces]
 
     if extrude_amount > 0 and rim_faces:
         rim_normals = [face.normal.copy() for face in rim_faces]
