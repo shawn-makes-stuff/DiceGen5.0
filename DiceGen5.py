@@ -892,21 +892,33 @@ def apply_boolean_modifier(body_object, numbers_object):
 
 def create_svg_mesh(context, filepath, scale, depth, name):
     existing_objects = set(bpy.data.objects)
+    existing_collections = set(bpy.data.collections)
+    new_collections = []
 
     try:
         bpy.ops.import_curve.svg(filepath=filepath)
     except (RuntimeError, OSError):
         return None
 
+    new_collections = [col for col in bpy.data.collections if col not in existing_collections]
     imported_objects = [ob for ob in bpy.data.objects if ob not in existing_objects]
     imported_object_names = [ob.name for ob in imported_objects]
     curve_object_names = [ob.name for ob in imported_objects if ob.type == 'CURVE']
     curve_objects = [bpy.data.objects[name] for name in curve_object_names if name in bpy.data.objects]
 
+    def cleanup_new_collections():
+        for collection in new_collections:
+            if not collection.objects and not collection.children:
+                for scene in bpy.data.scenes:
+                    if collection in scene.collection.children:
+                        scene.collection.children.unlink(collection)
+                bpy.data.collections.remove(collection)
+
     if not curve_objects:
         for obj_name in imported_object_names:
             if obj_name in bpy.data.objects:
                 bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
+        cleanup_new_collections()
         return None
 
     mesh_objects = []
@@ -922,11 +934,14 @@ def create_svg_mesh(context, filepath, scale, depth, name):
             bpy.data.objects.remove(bpy.data.objects[curve_name], do_unlink=True)
 
     if not mesh_objects:
+        cleanup_new_collections()
         return None
 
     for obj_name in imported_object_names:
         if obj_name in bpy.data.objects:
             bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
+
+    cleanup_new_collections()
 
     svg_mesh = join(mesh_objects)
     svg_mesh.name = name
