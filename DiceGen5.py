@@ -225,7 +225,9 @@ class D4Shard(Mesh):
         c2 = bottom_point_height * c0
 
         self.vertices = [(c0, 0, 0), (0, c0, 0), (0, -c0, 0), (-c0, 0, 0), (0, 0, c1), (0, 0, -c2)]
-        self.faces = [[0, 1, 4], [1, 3, 4], [3, 2, 4], [2, 0, 4], [0, 1, 5], [1, 3, 5], [3, 2, 5], [2, 0, 5]]
+        # top pyramid faces wind counter-clockwise when viewed from the outside,
+        # bottom pyramid faces wind clockwise to keep normals pointing outward
+        self.faces = [[0, 1, 4], [1, 3, 4], [3, 2, 4], [2, 0, 4], [0, 5, 1], [1, 5, 3], [3, 5, 2], [2, 5, 0]]
 
         self.base_font_scale = 0.8
 
