@@ -1,6 +1,8 @@
 import math
 import bpy
 import os
+import bmesh
+from contextlib import contextmanager
 from typing import List
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
@@ -11,7 +13,7 @@ from bpy_extras.object_utils import object_data_add
 bl_info = {
     'name': 'DiceGen 5.x',
     'author': 'Long Tran, shawn-makes-stuff',
-    'version': (1, 1, 1),
+    'version': (1, 2, 0),
     'blender': (5, 0, 0),
     'location': 'View3D > Add > Mesh',
     'description': 'Generate polyhedral dice models.',
@@ -845,6 +847,7 @@ def validate_svg_path(filepath):
 SETTINGS_ATTRS = [
     "size",
     "dice_finish",
+    "bumper_scale",
     "font_path",
     "number_scale",
     "number_depth",
@@ -927,25 +930,159 @@ def apply_boolean_modifier(body_object, numbers_object):
     body_object["dice_numbers_name"] = numbers_object.name
 
 
-def configure_dice_finish_modifier(body_object, dice_finish):
-    modifier_name = "dice_bevel"
-    bevel_modifier = body_object.modifiers.get(modifier_name)
+@contextmanager
+def ensure_object_mode(active_obj):
+    """Temporarily switch to OBJECT mode for mesh edits and restore the prior mode."""
+    view_layer = bpy.context.view_layer
+    previous_active = view_layer.objects.active
+    previous_mode = active_obj.mode if active_obj else None
 
-    if dice_finish == "sharp":
-        if bevel_modifier:
-            body_object.modifiers.remove(bevel_modifier)
+    try:
+        if active_obj and view_layer.objects.active != active_obj:
+            view_layer.objects.active = active_obj
+
+        if active_obj and active_obj.mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+            except RuntimeError:
+                pass
+
+        yield
+    finally:
+        if active_obj and previous_mode and previous_mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode=previous_mode)
+            except RuntimeError:
+                pass
+
+        if previous_active and previous_active != view_layer.objects.active:
+            view_layer.objects.active = previous_active
+
+
+def apply_bumpers_to_mesh(mesh_data, bumper_scale):
+    inset_amount = 0.4 * bumper_scale
+    extrude_amount = inset_amount * (0.5 / 0.3)
+
+    if inset_amount <= 0 and extrude_amount <= 0:
         return
 
-    if bevel_modifier is None:
-        bevel_modifier = body_object.modifiers.new(type='BEVEL', name=modifier_name)
+    bm = bmesh.new()
+    bm.from_mesh(mesh_data)
 
-    bevel_modifier.limit_method = 'NONE'
-    bevel_modifier.use_clamp_overlap = False
-    bevel_modifier.width = 0.3
-    bevel_modifier.segments = 1 if dice_finish == "chamfer" else 5
+    if not bm.faces:
+        bm.free()
+        return
 
-    if hasattr(bevel_modifier, "affect"):
-        bevel_modifier.affect = 'EDGES'
+    for face in bm.faces:
+        face.tag = True
+
+    inset_result = bmesh.ops.inset_individual(
+        bm,
+        faces=list(bm.faces),
+        thickness=inset_amount,
+        depth=0.0,
+        use_even_offset=True,
+    )
+
+    inset_faces = list(inset_result.get("faces", []))
+
+    # After the inset operation, Blender reports the new rim faces in
+    # the "faces" result, while the original faces remain as the inset
+    # centers. We want the raised bumper on the rim, so operate on the
+    # inset result directly instead of inverting the set.
+    rim_faces = inset_faces
+
+    if extrude_amount > 0 and rim_faces:
+        bm.normal_update()
+        rim_verts = set()
+
+        for face in rim_faces:
+            rim_verts.update(face.verts)
+
+        extrude_result = bmesh.ops.extrude_face_region(bm, geom=rim_faces)
+        extruded_geom = extrude_result.get("geom", [])
+        extruded_verts = [
+            ele for ele in extruded_geom
+            if isinstance(ele, bmesh.types.BMVert) and ele not in rim_verts
+        ]
+
+        if extruded_verts:
+            bm.normal_update()
+            for vert in extruded_verts:
+                if vert.normal.length > 0:
+                    vert.co += vert.normal.normalized() * extrude_amount
+
+    bm.normal_update()
+    bm.to_mesh(mesh_data)
+    bm.free()
+
+
+def configure_dice_finish_modifier(body_object, dice_finish, bumper_scale=1):
+    if body_object is None or body_object.type != 'MESH':
+        return
+
+    with ensure_object_mode(body_object):
+        modifier_name = "dice_bevel"
+        bevel_modifier = body_object.modifiers.get(modifier_name)
+        bumper_base_key = "dice_base_mesh_name"
+
+        if dice_finish != "bumpers":
+            base_mesh_name = body_object.get(bumper_base_key)
+            if base_mesh_name and base_mesh_name in bpy.data.meshes:
+                base_mesh = bpy.data.meshes[base_mesh_name]
+                if body_object.data != base_mesh:
+                    previous_mesh = body_object.data
+                    body_object.data = base_mesh.copy()
+                    if previous_mesh.users == 0 and previous_mesh != base_mesh:
+                        bpy.data.meshes.remove(previous_mesh)
+
+                base_mesh.use_fake_user = False
+                if base_mesh.users == 0:
+                    bpy.data.meshes.remove(base_mesh)
+
+                if bumper_base_key in body_object:
+                    del body_object[bumper_base_key]
+
+        if dice_finish == "bumpers":
+            if bevel_modifier:
+                body_object.modifiers.remove(bevel_modifier)
+
+            base_mesh = None
+            base_mesh_name = body_object.get(bumper_base_key)
+
+            if base_mesh_name and base_mesh_name in bpy.data.meshes:
+                base_mesh = bpy.data.meshes[base_mesh_name]
+            else:
+                base_mesh = body_object.data.copy()
+                base_mesh.use_fake_user = True
+                body_object[bumper_base_key] = base_mesh.name
+
+            working_mesh = base_mesh.copy()
+            apply_bumpers_to_mesh(working_mesh, bumper_scale)
+
+            previous_mesh = body_object.data
+            body_object.data = working_mesh
+
+            if previous_mesh not in (base_mesh, working_mesh) and previous_mesh.users == 0:
+                bpy.data.meshes.remove(previous_mesh)
+
+            return
+
+        if dice_finish == "sharp":
+            if bevel_modifier:
+                body_object.modifiers.remove(bevel_modifier)
+            return
+
+        if bevel_modifier is None:
+            bevel_modifier = body_object.modifiers.new(type='BEVEL', name=modifier_name)
+
+        bevel_modifier.limit_method = 'NONE'
+        bevel_modifier.use_clamp_overlap = False
+        bevel_modifier.width = 0.3
+        bevel_modifier.segments = 1 if dice_finish == "chamfer" else 5
+
+        if hasattr(bevel_modifier, "affect"):
+            bevel_modifier.affect = 'EDGES'
 
 
 def create_svg_mesh(context, filepath, scale, depth, name):
@@ -1179,7 +1316,7 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     # create the cube mesh
     die = mesh_cls("dice_body", op.size, **kwargs)
     die_obj = die.create(context)
-    configure_dice_finish_modifier(die_obj, op.dice_finish)
+    configure_dice_finish_modifier(die_obj, op.dice_finish, getattr(op, "bumper_scale", 1))
     body_material = ensure_material("Dice Body", (0.95, 0.95, 0.9, 1))
     assign_material(die_obj, body_material)
 
@@ -1235,9 +1372,22 @@ def DiceFinishProperty():
             ('sharp', 'Sharp', 'Keep edges sharp'),
             ('chamfer', 'Chamfer', 'Add a light bevel'),
             ('fillet', 'Fillet', 'Round edges with additional bevel segments'),
+            ('bumpers', 'Bumpers', 'Inset faces and raise the face borders'),
         ),
         default='sharp',
         description='Edge treatment for the dice body'
+    )
+
+
+def BumperScaleProperty():
+    return FloatProperty(
+        name='Bumper Size',
+        description='Scale the inset and extrusion used to create bumper edges',
+        min=0,
+        soft_min=0,
+        max=5,
+        soft_max=5,
+        default=1,
     )
 
 
@@ -1405,6 +1555,8 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     dice_finish: DiceFinishProperty()
 
+    bumper_scale: BumperScaleProperty()
+
     font_path: FontPathProperty
 
     custom_image_path: CustomImagePathProperty
@@ -1502,6 +1654,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
 class DiceGeneratorBase:
     dice_finish: DiceFinishProperty()
+    bumper_scale: BumperScaleProperty()
 
     def draw(self, context):
         layout = self.layout
@@ -1513,6 +1666,9 @@ class DiceGeneratorBase:
             annotations = getattr(cls, "__annotations__", {})
             for prop_name in annotations:
                 if prop_name in seen_props:
+                    continue
+
+                if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
                     continue
 
                 if hasattr(self, prop_name):
@@ -1932,7 +2088,11 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             die = mesh_cls(body_obj.name, size)
 
         die.dice_mesh = body_obj
-        configure_dice_finish_modifier(body_obj, settings_values.get("dice_finish", "sharp"))
+        configure_dice_finish_modifier(
+            body_obj,
+            settings_values.get("dice_finish", "sharp"),
+            settings_values.get("bumper_scale", 1),
+        )
 
         font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
