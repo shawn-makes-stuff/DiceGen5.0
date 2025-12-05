@@ -1391,15 +1391,27 @@ def _draw_prop_if_exists(op, layout, prop_name):
 def draw_generator_ui(op, layout):
     layout.prop(op, "dice_finish")
 
-    geometry_props = [
-        prop_name for prop_name in (
-            "base_height",
-            "point_height",
-            "top_point_height",
-            "bottom_point_height",
-            "height",
-        ) if _has_prop(op, prop_name)
-    ]
+    geometry_candidates = (
+        "size",
+        "base_height",
+        "point_height",
+        "top_point_height",
+        "bottom_point_height",
+        "height",
+    )
+
+    geometry_props = []
+    for prop_name in geometry_candidates:
+        if not _has_prop(op, prop_name):
+            continue
+
+        if prop_name == "size":
+            # Skip only the face-to-face length control while preserving other size-style inputs
+            size_prop = op.bl_rna.properties[prop_name]
+            if size_prop.name.lower().startswith("face2face"):
+                continue
+
+        geometry_props.append(prop_name)
 
     if geometry_props:
         geometry_box = layout.box()
