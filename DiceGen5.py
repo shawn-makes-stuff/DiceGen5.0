@@ -2,6 +2,7 @@ import math
 import bpy
 import os
 import bmesh
+from contextlib import contextmanager
 from typing import List
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
@@ -929,6 +930,35 @@ def apply_boolean_modifier(body_object, numbers_object):
     body_object["dice_numbers_name"] = numbers_object.name
 
 
+@contextmanager
+def ensure_object_mode(active_obj):
+    """Temporarily switch to OBJECT mode for mesh edits and restore the prior mode."""
+    view_layer = bpy.context.view_layer
+    previous_active = view_layer.objects.active
+    previous_mode = active_obj.mode if active_obj else None
+
+    try:
+        if active_obj and view_layer.objects.active != active_obj:
+            view_layer.objects.active = active_obj
+
+        if active_obj and active_obj.mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+            except RuntimeError:
+                pass
+
+        yield
+    finally:
+        if active_obj and previous_mode and previous_mode != 'OBJECT':
+            try:
+                bpy.ops.object.mode_set(mode=previous_mode)
+            except RuntimeError:
+                pass
+
+        if previous_active and previous_active != view_layer.objects.active:
+            view_layer.objects.active = previous_active
+
+
 def apply_bumpers_to_mesh(mesh_data, bumper_scale):
     inset_amount = 0.3 * bumper_scale
     extrude_amount = 0.5 * bumper_scale
@@ -979,67 +1009,71 @@ def apply_bumpers_to_mesh(mesh_data, bumper_scale):
 
 
 def configure_dice_finish_modifier(body_object, dice_finish, bumper_scale=1):
-    modifier_name = "dice_bevel"
-    bevel_modifier = body_object.modifiers.get(modifier_name)
-    bumper_base_key = "dice_base_mesh_name"
-
-    if dice_finish != "bumpers":
-        base_mesh_name = body_object.get(bumper_base_key)
-        if base_mesh_name and base_mesh_name in bpy.data.meshes:
-            base_mesh = bpy.data.meshes[base_mesh_name]
-            if body_object.data != base_mesh:
-                previous_mesh = body_object.data
-                body_object.data = base_mesh.copy()
-                if previous_mesh.users == 0 and previous_mesh != base_mesh:
-                    bpy.data.meshes.remove(previous_mesh)
-
-            base_mesh.use_fake_user = False
-            if base_mesh.users == 0:
-                bpy.data.meshes.remove(base_mesh)
-
-            if bumper_base_key in body_object:
-                del body_object[bumper_base_key]
-
-    if dice_finish == "bumpers":
-        if bevel_modifier:
-            body_object.modifiers.remove(bevel_modifier)
-
-        base_mesh = None
-        base_mesh_name = body_object.get(bumper_base_key)
-
-        if base_mesh_name and base_mesh_name in bpy.data.meshes:
-            base_mesh = bpy.data.meshes[base_mesh_name]
-        else:
-            base_mesh = body_object.data.copy()
-            base_mesh.use_fake_user = True
-            body_object[bumper_base_key] = base_mesh.name
-
-        working_mesh = base_mesh.copy()
-        apply_bumpers_to_mesh(working_mesh, bumper_scale)
-
-        previous_mesh = body_object.data
-        body_object.data = working_mesh
-
-        if previous_mesh not in (base_mesh, working_mesh) and previous_mesh.users == 0:
-            bpy.data.meshes.remove(previous_mesh)
-
+    if body_object is None or body_object.type != 'MESH':
         return
 
-    if dice_finish == "sharp":
-        if bevel_modifier:
-            body_object.modifiers.remove(bevel_modifier)
-        return
+    with ensure_object_mode(body_object):
+        modifier_name = "dice_bevel"
+        bevel_modifier = body_object.modifiers.get(modifier_name)
+        bumper_base_key = "dice_base_mesh_name"
 
-    if bevel_modifier is None:
-        bevel_modifier = body_object.modifiers.new(type='BEVEL', name=modifier_name)
+        if dice_finish != "bumpers":
+            base_mesh_name = body_object.get(bumper_base_key)
+            if base_mesh_name and base_mesh_name in bpy.data.meshes:
+                base_mesh = bpy.data.meshes[base_mesh_name]
+                if body_object.data != base_mesh:
+                    previous_mesh = body_object.data
+                    body_object.data = base_mesh.copy()
+                    if previous_mesh.users == 0 and previous_mesh != base_mesh:
+                        bpy.data.meshes.remove(previous_mesh)
 
-    bevel_modifier.limit_method = 'NONE'
-    bevel_modifier.use_clamp_overlap = False
-    bevel_modifier.width = 0.3
-    bevel_modifier.segments = 1 if dice_finish == "chamfer" else 5
+                base_mesh.use_fake_user = False
+                if base_mesh.users == 0:
+                    bpy.data.meshes.remove(base_mesh)
 
-    if hasattr(bevel_modifier, "affect"):
-        bevel_modifier.affect = 'EDGES'
+                if bumper_base_key in body_object:
+                    del body_object[bumper_base_key]
+
+        if dice_finish == "bumpers":
+            if bevel_modifier:
+                body_object.modifiers.remove(bevel_modifier)
+
+            base_mesh = None
+            base_mesh_name = body_object.get(bumper_base_key)
+
+            if base_mesh_name and base_mesh_name in bpy.data.meshes:
+                base_mesh = bpy.data.meshes[base_mesh_name]
+            else:
+                base_mesh = body_object.data.copy()
+                base_mesh.use_fake_user = True
+                body_object[bumper_base_key] = base_mesh.name
+
+            working_mesh = base_mesh.copy()
+            apply_bumpers_to_mesh(working_mesh, bumper_scale)
+
+            previous_mesh = body_object.data
+            body_object.data = working_mesh
+
+            if previous_mesh not in (base_mesh, working_mesh) and previous_mesh.users == 0:
+                bpy.data.meshes.remove(previous_mesh)
+
+            return
+
+        if dice_finish == "sharp":
+            if bevel_modifier:
+                body_object.modifiers.remove(bevel_modifier)
+            return
+
+        if bevel_modifier is None:
+            bevel_modifier = body_object.modifiers.new(type='BEVEL', name=modifier_name)
+
+        bevel_modifier.limit_method = 'NONE'
+        bevel_modifier.use_clamp_overlap = False
+        bevel_modifier.width = 0.3
+        bevel_modifier.segments = 1 if dice_finish == "chamfer" else 5
+
+        if hasattr(bevel_modifier, "affect"):
+            bevel_modifier.affect = 'EDGES'
 
 
 def create_svg_mesh(context, filepath, scale, depth, name):
