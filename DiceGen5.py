@@ -984,8 +984,13 @@ def apply_bumpers_to_mesh(mesh_data, bumper_scale):
         use_even_offset=True,
     )
 
-    inset_faces = set(inset_result.get("faces", []))
-    rim_faces = [face for face in bm.faces if face not in inset_faces]
+    inset_faces = list(inset_result.get("faces", []))
+
+    # After the inset operation, Blender reports the new rim faces in
+    # the "faces" result, while the original faces remain as the inset
+    # centers. We want the raised bumper on the rim, so operate on the
+    # inset result directly instead of inverting the set.
+    rim_faces = inset_faces
 
     if extrude_amount > 0 and rim_faces:
         rim_normals = [face.normal.copy() for face in rim_faces]
