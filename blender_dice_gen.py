@@ -892,7 +892,6 @@ def apply_boolean_modifier(body_object, numbers_object):
 
 def create_svg_mesh(context, filepath, scale, depth, name):
     existing_objects = set(bpy.data.objects)
-    existing_collections = set(bpy.data.collections)
 
     try:
         bpy.ops.import_curve.svg(filepath=filepath)
@@ -903,7 +902,7 @@ def create_svg_mesh(context, filepath, scale, depth, name):
     imported_object_names = [ob.name for ob in imported_objects]
     curve_object_names = [ob.name for ob in imported_objects if ob.type == 'CURVE']
     curve_objects = [bpy.data.objects[name] for name in curve_object_names if name in bpy.data.objects]
-    imported_collections = [col for col in bpy.data.collections if col not in existing_collections]
+    imported_collections = {col for obj in imported_objects for col in obj.users_collection}
 
     if not curve_objects:
         for obj_name in imported_object_names:
