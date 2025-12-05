@@ -955,12 +955,20 @@ def apply_bumpers_to_mesh(mesh_data, bumper_scale):
     rim_faces = [face for face in bm.faces if face not in inset_faces]
 
     if extrude_amount > 0:
-        for face in rim_faces:
-            extrude_result = bmesh.ops.extrude_face_region(bm, geom=[face])
-            extruded_verts = [elem for elem in extrude_result["geom"] if isinstance(elem, bmesh.types.BMVert)]
+        rim_normals = [face.normal.copy() for face in rim_faces]
+        extrude_result = bmesh.ops.extrude_faces_individual(bm, faces=rim_faces)
+        extruded_faces = extrude_result.get("faces", [])
+
+        for normal, extruded_face in zip(rim_normals, extruded_faces):
+            extruded_verts = set(extruded_face.verts)
+            for loop in extruded_face.loops:
+                extruded_verts.add(loop.vert)
+
             if extruded_verts:
                 bmesh.ops.translate(
-                    bm, verts=extruded_verts, vec=face.normal.normalized() * extrude_amount
+                    bm,
+                    verts=list(extruded_verts),
+                    vec=normal.normalized() * extrude_amount,
                 )
 
     bm.normal_update()
