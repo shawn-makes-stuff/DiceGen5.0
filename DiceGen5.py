@@ -101,7 +101,7 @@ class Mesh:
     def get_number_rotations(self):
         return []
 
-    def create_numbers(self, context, size, number_scale, number_depth, font_path, one_offset,
+    def create_numbers(self, context, size, number_scale, number_depth, font_path, font_source, installed_font, one_offset,
                        number_indicator_type=NUMBER_IND_NONE, period_indicator_scale=1, period_indicator_space=1,
                        bar_indicator_height=1, bar_indicator_width=1, bar_indicator_space=1,
                        center_bar=True, custom_image_face=0, custom_image_path='', custom_image_scale=1):
@@ -111,9 +111,9 @@ class Mesh:
 
         font_size = self.base_font_scale * size * number_scale
 
-        numbers_object = create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth,
-                                        number_indicator_type, period_indicator_scale, period_indicator_space,
-                                        bar_indicator_height, bar_indicator_width, bar_indicator_space,
+        numbers_object = create_numbers(context, numbers, locations, rotations, font_path, font_source, installed_font,
+                                        font_size, number_depth, number_indicator_type, period_indicator_scale,
+                                        period_indicator_space, bar_indicator_height, bar_indicator_width, bar_indicator_space,
                                         center_bar, one_offset, custom_image_face=custom_image_face,
                                         custom_image_path=custom_image_path, custom_image_scale=custom_image_scale)
 
@@ -827,7 +827,7 @@ def join(objects):
 
 
 def validate_font_path(filepath):
-    # set font to emtpy if it's not a ttf file
+    # set font to empty if it's not a supported font file
     if filepath and not os.path.isfile(filepath):
         return ''
 
@@ -850,7 +850,9 @@ SETTINGS_ATTRS = [
     "size",
     "dice_finish",
     "bumper_scale",
+    "font_source",
     "font_path",
+    "installed_font",
     "number_scale",
     "number_depth",
     "one_offset",
@@ -904,7 +906,12 @@ def resolve_settings_owner(obj):
     return None
 
 
-def get_font(filepath):
+def get_font(filepath, font_source='file', installed_font=''):
+    if font_source == 'installed' and installed_font:
+        font = bpy.data.fonts.get(installed_font)
+        if font:
+            return font
+
     if filepath:
         try:
             bpy.data.fonts.load(filepath=filepath, check_existing=True)
@@ -1172,9 +1179,9 @@ def create_svg_mesh(context, filepath, scale, depth, name):
     return svg_mesh
 
 
-def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
+def create_text_mesh(context, text, font_path, font_source, installed_font, font_size, name, extrude=0):
     # load the font
-    font = get_font(font_path)
+    font = get_font(font_path, font_source, installed_font)
 
     # create the text curve
     font_curve = bpy.data.curves.new(type='FONT', name=name)
@@ -1195,17 +1202,17 @@ def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
     return object_data_add(context, mesh, operator=None)
 
 
-def create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth, number_indicator_type,
-                   period_indicator_scale, period_indicator_space, bar_indicator_height, bar_indicator_width,
-                   bar_indicator_space, center_bar, one_offset, custom_image_face=0, custom_image_path='',
-                   custom_image_scale=1):
+def create_numbers(context, numbers, locations, rotations, font_path, font_source, installed_font, font_size,
+                   number_depth, number_indicator_type, period_indicator_scale, period_indicator_space,
+                   bar_indicator_height, bar_indicator_width, bar_indicator_space, center_bar, one_offset,
+                   custom_image_face=0, custom_image_path='', custom_image_scale=1):
     number_objs = []
     # create the number meshes
     for i in range(len(locations)):
-        number_object = create_number(context, numbers[i], font_path, font_size, number_depth, locations[i],
-                                      rotations[i], number_indicator_type, period_indicator_scale,
-                                      period_indicator_space, bar_indicator_height, bar_indicator_width,
-                                      bar_indicator_space, center_bar, one_offset,
+        number_object = create_number(context, numbers[i], font_path, font_source, installed_font, font_size,
+                                      number_depth, locations[i], rotations[i], number_indicator_type,
+                                      period_indicator_scale, period_indicator_space, bar_indicator_height,
+                                      bar_indicator_width, bar_indicator_space, center_bar, one_offset,
                                       custom_image_face=custom_image_face, custom_image_path=custom_image_path,
                                       custom_image_scale=custom_image_scale, index=i)
         number_objs.append(number_object)
@@ -1221,10 +1228,10 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_size,
     return None
 
 
-def create_number(context, number, font_path, font_size, number_depth, location, rotation, number_indicator_type,
-                  period_indicator_scale, period_indicator_space, bar_indicator_height, bar_indicator_width,
-                  bar_indicator_space, center_bar, one_offset, custom_image_face=0, custom_image_path='',
-                  custom_image_scale=1, index=0):
+def create_number(context, number, font_path, font_source, installed_font, font_size, number_depth, location, rotation,
+                  number_indicator_type, period_indicator_scale, period_indicator_space, bar_indicator_height,
+                  bar_indicator_width, bar_indicator_space, center_bar, one_offset, custom_image_face=0,
+                  custom_image_path='', custom_image_scale=1, index=0):
     """
     Create a number mesh that will be used in a boolean modifier
     """
@@ -1238,7 +1245,8 @@ def create_number(context, number, font_path, font_size, number_depth, location,
 
     if mesh_object is None:
         # add number
-        mesh_object = create_text_mesh(context, number, font_path, font_size, f'number_{number}', number_depth)
+        mesh_object = create_text_mesh(context, number, font_path, font_source, installed_font, font_size,
+                                       f'number_{number}', number_depth)
 
     # set origin to bounding box center
     set_origin_center_bounds(mesh_object)
@@ -1253,8 +1261,8 @@ def create_number(context, number, font_path, font_size, number_depth, location,
                 pass
         elif number in ('6', '9'):
             if number_indicator_type == NUMBER_IND_PERIOD:
-                p_obj = create_text_mesh(context, '.', font_path, font_size * period_indicator_scale, f'period_{number}',
-                                         number_depth)
+                p_obj = create_text_mesh(context, '.', font_path, font_source, installed_font,
+                                         font_size * period_indicator_scale, f'period_{number}', number_depth)
 
                 # move origin of period to the bottom left corner of the mesh
                 set_origin_min_bounds(p_obj)
@@ -1311,8 +1319,12 @@ def create_number(context, number, font_path, font_size, number_depth, location,
 
 
 def execute_generator(op, context, mesh_cls, name, **kwargs):
-    # set font to emtpy if it's not a ttf file
-    op.font_path = validate_font_path(op.font_path)
+    # set font to empty if it's not a supported font file
+    if op.font_source == 'file':
+        op.font_path = validate_font_path(op.font_path)
+    else:
+        op.font_path = ''
+
     op.custom_image_path = validate_svg_path(op.custom_image_path)
 
     # create the cube mesh
@@ -1330,17 +1342,17 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     if op.add_numbers:
         if op.number_indicator_type == NUMBER_IND_NONE:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
-                custom_image_face=op.custom_image_face, custom_image_path=op.custom_image_path,
-                custom_image_scale=op.custom_image_scale
+                context, op.size, op.number_scale, op.number_depth, op.font_path, op.font_source,
+                op.installed_font, op.one_offset, custom_image_face=op.custom_image_face,
+                custom_image_path=op.custom_image_path, custom_image_scale=op.custom_image_scale
             )
         else:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
-                op.number_indicator_type, op.period_indicator_scale, op.period_indicator_space,
-                op.bar_indicator_height, op.bar_indicator_width, op.bar_indicator_space, op.center_bar,
-                custom_image_face=op.custom_image_face, custom_image_path=op.custom_image_path,
-                custom_image_scale=op.custom_image_scale
+                context, op.size, op.number_scale, op.number_depth, op.font_path, op.font_source,
+                op.installed_font, op.one_offset, op.number_indicator_type, op.period_indicator_scale,
+                op.period_indicator_space, op.bar_indicator_height, op.bar_indicator_width,
+                op.bar_indicator_space, op.center_bar, custom_image_face=op.custom_image_face,
+                custom_image_path=op.custom_image_path, custom_image_scale=op.custom_image_scale
             )
 
     target_object = numbers_object or die_obj
@@ -1425,6 +1437,39 @@ FontPathProperty = StringProperty(
     maxlen=1024,
     subtype='FILE_PATH'
 )
+
+
+def FontSourceProperty():
+    return EnumProperty(
+        name='Font Source',
+        items=(
+            ('file', 'Font File', 'Load a font from a file path'),
+            ('installed', 'Installed Font', 'Use a font that is already loaded in Blender'),
+        ),
+        default='file',
+        description='Choose whether to load a font from disk or an installed Blender font'
+    )
+
+
+def InstalledFontProperty():
+    def font_items(self, context):
+        fonts = []
+        for font in bpy.data.fonts:
+            label = font.name
+            if font.filepath:
+                label = f"{font.name} ({os.path.basename(font.filepath)})"
+            fonts.append((font.name, label, font.filepath or 'Built-in font'))
+
+        if not fonts:
+            fonts.append(('Bfont', 'Bfont', 'Built-in font'))
+
+        return fonts
+
+    return EnumProperty(
+        name='Installed Font',
+        description='Choose from fonts already loaded in Blender',
+        items=font_items,
+    )
 
 CustomImagePathProperty = StringProperty(
     name='Custom Image (SVG)',
@@ -1559,7 +1604,11 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     bumper_scale: BumperScaleProperty()
 
+    font_source: FontSourceProperty()
+
     font_path: FontPathProperty
+
+    installed_font: InstalledFontProperty()
 
     custom_image_path: CustomImagePathProperty
 
@@ -1673,9 +1722,19 @@ class DiceGeneratorBase:
                 if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
                     continue
 
+                if prop_name in {"font_path", "installed_font"}:
+                    continue
+
                 if hasattr(self, prop_name):
                     layout.prop(self, prop_name)
                     seen_props.add(prop_name)
+
+        if hasattr(self, "font_source"):
+            layout.prop(self, "font_source")
+            if getattr(self, "font_source", "file") == 'file':
+                layout.prop(self, "font_path")
+            else:
+                layout.prop(self, "installed_font")
 
 
 class D4Generator(DiceGeneratorBase, bpy.types.Operator):
@@ -1704,7 +1763,11 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
 
     number_depth: NumberDepthProperty
 
+    font_source: FontSourceProperty()
+
     font_path: FontPathProperty
+
+    installed_font: InstalledFontProperty()
 
     custom_image_path: CustomImagePathProperty
 
@@ -1764,7 +1827,9 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     custom_image_path: CustomImagePathProperty
     custom_image_face: CustomImageFaceProperty
@@ -1818,7 +1883,9 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     number_v_offset: NumberVOffsetProperty(0.7)
     custom_image_path: CustomImagePathProperty
@@ -1841,7 +1908,9 @@ class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
     period_indicator_scale: PeriodIndicatorScaleProperty
@@ -1869,7 +1938,9 @@ class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
     period_indicator_scale: PeriodIndicatorScaleProperty
@@ -1897,7 +1968,9 @@ class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     number_indicator_type: NumberIndicatorTypeProperty()
     period_indicator_scale: PeriodIndicatorScaleProperty
@@ -1925,7 +1998,9 @@ class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     number_indicator_type: NumberIndicatorTypeProperty()
     period_indicator_scale: PeriodIndicatorScaleProperty
@@ -1964,7 +2039,9 @@ class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
     number_v_offset: NumberVOffsetProperty(1 / 3)
     number_indicator_type: NumberIndicatorTypeProperty()
@@ -2008,7 +2085,9 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
+    font_source: FontSourceProperty()
     font_path: FontPathProperty
+    installed_font: InstalledFontProperty()
     number_v_offset: NumberVOffsetProperty(1 / 3)
     custom_image_path: CustomImagePathProperty
     custom_image_face: CustomImageFaceProperty
@@ -2096,7 +2175,10 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             settings_values.get("bumper_scale", 1),
         )
 
-        font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
+        if settings_values.get("font_source") == 'file':
+            font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
+        else:
+            font_path = ""
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
         settings_values["custom_image_path"] = custom_image_path
 
@@ -2111,6 +2193,8 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_scale"],
                         settings_values["number_depth"],
                         font_path,
+                        settings_values.get("font_source", "file"),
+                        settings_values.get("installed_font", ""),
                         settings_values["one_offset"],
                         settings_values["number_indicator_type"],
                         settings_values["period_indicator_scale"],
@@ -2130,6 +2214,8 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_scale"],
                         settings_values["number_depth"],
                         font_path,
+                        settings_values.get("font_source", "file"),
+                        settings_values.get("installed_font", ""),
                         settings_values["one_offset"],
                         custom_image_face=settings_values["custom_image_face"],
                         custom_image_path=custom_image_path,
@@ -2199,7 +2285,11 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
         settings = settings_owner.dice_gen_settings
 
         col = layout.column()
-        col.prop(settings, "font_path")
+        col.prop(settings, "font_source")
+        if settings.font_source == 'file':
+            col.prop(settings, "font_path")
+        else:
+            col.prop(settings, "installed_font")
         col.prop(settings, "custom_image_path")
         col.prop(settings, "custom_image_face")
         col.prop(settings, "custom_image_scale")
