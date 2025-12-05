@@ -1379,80 +1379,6 @@ CenterBarProperty = BoolProperty(
 )
 
 
-def _has_prop(op, prop_name):
-    return hasattr(op, prop_name) or prop_name in op.bl_rna.properties
-
-
-def _draw_prop_if_exists(op, layout, prop_name):
-    if _has_prop(op, prop_name):
-        layout.prop(op, prop_name)
-
-
-def draw_generator_ui(op, layout):
-    layout.prop(op, "dice_finish")
-
-    geometry_candidates = (
-        "size",
-        "base_height",
-        "point_height",
-        "top_point_height",
-        "bottom_point_height",
-        "height",
-    )
-
-    geometry_props = []
-    for prop_name in geometry_candidates:
-        if not _has_prop(op, prop_name):
-            continue
-
-        if prop_name == "size":
-            # Skip only the face-to-face length control while preserving other size-style inputs
-            size_prop = op.bl_rna.properties[prop_name]
-            if size_prop.name.lower().startswith("face2face"):
-                continue
-
-        geometry_props.append(prop_name)
-
-    if geometry_props:
-        geometry_box = layout.box()
-        geometry_box.label(text="Geometry")
-        for prop_name in geometry_props:
-            geometry_box.prop(op, prop_name)
-
-    numbers_box = layout.box()
-    numbers_box.label(text="Numbers")
-
-    numbers_column = numbers_box.column()
-    if _has_prop(op, "add_numbers"):
-        numbers_box.prop(op, "add_numbers")
-        numbers_column.enabled = op.add_numbers
-
-    for prop_name in (
-        "number_scale",
-        "number_depth",
-        "font_path",
-        "custom_image_path",
-        "custom_image_face",
-        "custom_image_scale",
-    ):
-        _draw_prop_if_exists(op, numbers_column, prop_name)
-
-    if _has_prop(op, "number_indicator_type"):
-        numbers_column.prop(op, "number_indicator_type")
-        if getattr(op, "number_indicator_type", NUMBER_IND_NONE) != NUMBER_IND_NONE:
-            for prop_name in (
-                "period_indicator_scale",
-                "period_indicator_space",
-                "bar_indicator_height",
-                "bar_indicator_width",
-                "bar_indicator_space",
-                "center_bar",
-            ):
-                _draw_prop_if_exists(op, numbers_column, prop_name)
-
-    for prop_name in ("number_v_offset", "number_center_offset"):
-        _draw_prop_if_exists(op, numbers_column, prop_name)
-
 
 def NumberVOffsetProperty(default: float): return FloatProperty(
     name='Number V Offset',
@@ -1578,7 +1504,20 @@ class DiceGeneratorBase:
     dice_finish: DiceFinishProperty()
 
     def draw(self, context):
-        draw_generator_ui(self, self.layout)
+        layout = self.layout
+
+        layout.prop(self, "dice_finish")
+
+        seen_props = {"dice_finish"}
+        for cls in reversed(type(self).mro()):
+            annotations = getattr(cls, "__annotations__", {})
+            for prop_name in annotations:
+                if prop_name in seen_props:
+                    continue
+
+                if hasattr(self, prop_name):
+                    layout.prop(self, prop_name)
+                    seen_props.add(prop_name)
 
 
 class D4Generator(DiceGeneratorBase, bpy.types.Operator):
