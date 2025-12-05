@@ -2,11 +2,11 @@
 
 A Blender add-on that generates polyhedral dice.
 
-![](https://github.com/Longi94/blender-dice-gen/raw/main/img/banner_ss.png)
+![](https://github.com/user-attachments/assets/52db5bd6-0d78-4d2a-b9cd-36b29cd95511)
 
 ## Installation and usage
 
-Download the [python script](https://github.com/shawn-makes-stuff/DiceGen5.0/blob/main/blender_dice_gen.py), then go to `Edit > Preferences... > Add-ons > Install...` and select the python file.
+Download the [python script](https://github.com/shawn-makes-stuff/DiceGen5.0/blob/main/DiceGen5.py), then go to `Edit > Preferences... > Add-ons > Install...` and select the python file.
 
 Afterwards you will be able to generate dice in `Add > Mesh > Dice`
 
