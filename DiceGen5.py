@@ -721,6 +721,24 @@ def create_mesh(context, vertices, faces, name):
     return object_data_add(context, mesh, operator=None)
 
 
+def ensure_material(name, base_color):
+    material = bpy.data.materials.get(name)
+    if material is None:
+        material = bpy.data.materials.new(name=name)
+    material.use_nodes = True
+    if material.node_tree:
+        bsdf = material.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = base_color
+    return material
+
+
+def assign_material(obj, material):
+    if obj.data.materials:
+        obj.data.materials.clear()
+    obj.data.materials.append(material)
+
+
 def apply_transform(ob, use_location=False, use_rotation=False, use_scale=False):
     """
     https://blender.stackexchange.com/questions/159538/how-to-apply-all-transformations-to-an-object-at-low-level
@@ -1017,6 +1035,8 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_size,
     if len(number_objs):
         numbers = join(number_objs)
         apply_transform(numbers, use_rotation=True, use_location=True)
+        numbers_material = ensure_material("Dice Numbers", (0, 0, 0, 1))
+        assign_material(numbers, numbers_material)
         return numbers
 
     return None
@@ -1119,6 +1139,8 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     # create the cube mesh
     die = mesh_cls("dice_body", op.size, **kwargs)
     die_obj = die.create(context)
+    body_material = ensure_material("Dice Body", (0.95, 0.95, 0.9, 1))
+    assign_material(die_obj, body_material)
 
     settings_template = die_obj.dice_gen_settings
     settings_values = collect_settings_from_op(op, settings_template)
