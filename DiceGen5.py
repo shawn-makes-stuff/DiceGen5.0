@@ -960,8 +960,8 @@ def ensure_object_mode(active_obj):
 
 
 def apply_bumpers_to_mesh(mesh_data, bumper_scale):
-    inset_amount = 0.3 * bumper_scale
-    extrude_amount = 0.5 * bumper_scale
+    inset_amount = 0.4 * bumper_scale
+    extrude_amount = inset_amount * (0.5 / 0.3)
 
     if inset_amount <= 0 and extrude_amount <= 0:
         return
@@ -993,19 +993,28 @@ def apply_bumpers_to_mesh(mesh_data, bumper_scale):
     rim_faces = inset_faces
 
     if extrude_amount > 0 and rim_faces:
-        rim_normals = [face.normal.copy() for face in rim_faces]
-        extrude_result = bmesh.ops.extrude_discrete_faces(bm, faces=rim_faces)
-        extruded_faces = extrude_result.get("faces", [])
+        bm.normal_update()
+        rim_normal = Vector()
+        rim_verts = set()
 
-        for face, normal in zip(extruded_faces, rim_normals):
-            if normal.length == 0:
-                continue
+        for face in rim_faces:
+            rim_normal += face.normal * face.calc_area()
+            rim_verts.update(face.verts)
 
-            bmesh.ops.translate(
-                bm,
-                verts=list(face.verts),
-                vec=normal.normalized() * extrude_amount,
-            )
+        if rim_normal.length > 0:
+            extrude_result = bmesh.ops.extrude_face_region(bm, geom=rim_faces)
+            extruded_geom = extrude_result.get("geom", [])
+            extruded_verts = [
+                ele for ele in extruded_geom
+                if isinstance(ele, bmesh.types.BMVert) and ele not in rim_verts
+            ]
+
+            if extruded_verts:
+                bmesh.ops.translate(
+                    bm,
+                    verts=extruded_verts,
+                    vec=rim_normal.normalized() * extrude_amount,
+                )
 
     bm.normal_update()
     bm.to_mesh(mesh_data)
