@@ -1380,7 +1380,7 @@ CenterBarProperty = BoolProperty(
 
 
 def _has_prop(op, prop_name):
-    return prop_name in op.bl_rna.properties
+    return hasattr(op, prop_name) or prop_name in op.bl_rna.properties
 
 
 def _draw_prop_if_exists(op, layout, prop_name):
