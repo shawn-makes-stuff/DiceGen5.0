@@ -675,6 +675,29 @@ def set_origin(o, v):
     mw.translation = mw @ v
 
 
+def _calculate_bounds(vertices):
+    iterator = iter(vertices)
+    try:
+        first_vertex = next(iterator)
+    except StopIteration:
+        return None
+
+    min_x = max_x = first_vertex.co.x
+    min_y = max_y = first_vertex.co.y
+    min_z = max_z = first_vertex.co.z
+
+    for v in iterator:
+        x, y, z = v.co.x, v.co.y, v.co.z
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+        min_z = min(min_z, z)
+        max_z = max(max_z, z)
+
+    return min_x, max_x, min_y, max_y, min_z, max_z
+
+
 def set_origin_center_bounds(o):
     """
     set an objects origin to the center of its bounding box
@@ -682,15 +705,11 @@ def set_origin_center_bounds(o):
     :return:
     """
     me = o.data
+    bounds = _calculate_bounds(me.vertices)
+    if bounds is None:
+        return
 
-    max_x = max((v.co.x for v in me.vertices))
-    max_y = max((v.co.y for v in me.vertices))
-    max_z = max((v.co.z for v in me.vertices))
-
-    min_x = min((v.co.x for v in me.vertices))
-    min_y = min((v.co.y for v in me.vertices))
-    min_z = min((v.co.z for v in me.vertices))
-
+    min_x, max_x, min_y, max_y, min_z, max_z = bounds
     set_origin(o, Vector(((min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2)))
 
 
@@ -701,12 +720,11 @@ def set_origin_min_bounds(o):
     :return:
     """
     me = o.data
+    bounds = _calculate_bounds(me.vertices)
+    if bounds is None:
+        return
 
-    max_z = max((v.co.z for v in me.vertices))
-    min_x = min((v.co.x for v in me.vertices))
-    min_y = min((v.co.y for v in me.vertices))
-    min_z = min((v.co.z for v in me.vertices))
-
+    min_x, _, min_y, _, min_z, max_z = bounds
     set_origin(o, Vector((min_x, min_y, (min_z + max_z) / 2)))
 
 
@@ -826,6 +844,7 @@ def validate_svg_path(filepath):
 
 SETTINGS_ATTRS = [
     "size",
+    "dice_finish",
     "font_path",
     "number_scale",
     "number_depth",
@@ -906,6 +925,27 @@ def apply_boolean_modifier(body_object, numbers_object):
 
     # remember the numbers object for regeneration
     body_object["dice_numbers_name"] = numbers_object.name
+
+
+def configure_dice_finish_modifier(body_object, dice_finish):
+    modifier_name = "dice_bevel"
+    bevel_modifier = body_object.modifiers.get(modifier_name)
+
+    if dice_finish == "sharp":
+        if bevel_modifier:
+            body_object.modifiers.remove(bevel_modifier)
+        return
+
+    if bevel_modifier is None:
+        bevel_modifier = body_object.modifiers.new(type='BEVEL', name=modifier_name)
+
+    bevel_modifier.limit_method = 'NONE'
+    bevel_modifier.use_clamp_overlap = False
+    bevel_modifier.width = 0.3
+    bevel_modifier.segments = 1 if dice_finish == "chamfer" else 5
+
+    if hasattr(bevel_modifier, "affect"):
+        bevel_modifier.affect = 'EDGES'
 
 
 def create_svg_mesh(context, filepath, scale, depth, name):
@@ -1139,6 +1179,7 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     # create the cube mesh
     die = mesh_cls("dice_body", op.size, **kwargs)
     die_obj = die.create(context)
+    configure_dice_finish_modifier(die_obj, op.dice_finish)
     body_material = ensure_material("Dice Body", (0.95, 0.95, 0.9, 1))
     assign_material(die_obj, body_material)
 
@@ -1184,6 +1225,19 @@ def Face2FaceProperty(default: float):
         soft_max=100,
         default=default,
         unit='LENGTH'
+    )
+
+
+def DiceFinishProperty():
+    return EnumProperty(
+        name='Dice Type',
+        items=(
+            ('sharp', 'Sharp', 'Keep edges sharp'),
+            ('chamfer', 'Chamfer', 'Add a light bevel'),
+            ('fillet', 'Fillet', 'Round edges with additional bevel segments'),
+        ),
+        default='sharp',
+        description='Edge treatment for the dice body'
     )
 
 
@@ -1325,6 +1379,7 @@ CenterBarProperty = BoolProperty(
 )
 
 
+
 def NumberVOffsetProperty(default: float): return FloatProperty(
     name='Number V Offset',
     description='Vertical offset of the number positioning',
@@ -1347,6 +1402,8 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         default=20,
         unit='LENGTH',
     )
+
+    dice_finish: DiceFinishProperty()
 
     font_path: FontPathProperty
 
@@ -1443,7 +1500,27 @@ class DiceGenSettings(bpy.types.PropertyGroup):
     )
 
 
-class D4Generator(bpy.types.Operator):
+class DiceGeneratorBase:
+    dice_finish: DiceFinishProperty()
+
+    def draw(self, context):
+        layout = self.layout
+
+        layout.prop(self, "dice_finish")
+
+        seen_props = {"dice_finish"}
+        for cls in reversed(type(self).mro()):
+            annotations = getattr(cls, "__annotations__", {})
+            for prop_name in annotations:
+                if prop_name in seen_props:
+                    continue
+
+                if hasattr(self, prop_name):
+                    layout.prop(self, prop_name)
+                    seen_props.add(prop_name)
+
+
+class D4Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D4"""
     bl_idname = 'mesh.d4_add'
     bl_label = 'D4 Tetrahedron'
@@ -1493,7 +1570,7 @@ class D4Generator(bpy.types.Operator):
         return execute_generator(self, context, Tetrahedron, 'd4', number_center_offset=self.number_center_offset)
 
 
-class D4CrystalGenerator(bpy.types.Operator):
+class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D4 crystal"""
     bl_idname = 'mesh.d4_crystal_add'
     bl_label = 'D4 Crystal'
@@ -1540,7 +1617,7 @@ class D4CrystalGenerator(bpy.types.Operator):
                                  point_height=self.point_height)
 
 
-class D4ShardGenerator(bpy.types.Operator):
+class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D4 shard"""
     bl_idname = 'mesh.d4_shard_add'
     bl_label = 'D4 Shard'
@@ -1595,7 +1672,7 @@ class D4ShardGenerator(bpy.types.Operator):
                                  bottom_point_height=self.bottom_point_height, number_v_offset=self.number_v_offset)
 
 
-class D6Generator(bpy.types.Operator):
+class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D6"""
     bl_idname = 'mesh.d6_add'
     bl_label = 'D6 Cube'
@@ -1623,7 +1700,7 @@ class D6Generator(bpy.types.Operator):
         return execute_generator(self, context, Cube, 'd6')
 
 
-class D8Generator(bpy.types.Operator):
+class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D8"""
     bl_idname = 'mesh.d8_add'
     bl_label = 'D8 Octahedron'
@@ -1651,7 +1728,7 @@ class D8Generator(bpy.types.Operator):
         return execute_generator(self, context, Octahedron, 'd8')
 
 
-class D12Generator(bpy.types.Operator):
+class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D12"""
     bl_idname = 'mesh.d12_add'
     bl_label = 'D12 Dodecahedron'
@@ -1679,7 +1756,7 @@ class D12Generator(bpy.types.Operator):
         return execute_generator(self, context, Dodecahedron, 'd12')
 
 
-class D20Generator(bpy.types.Operator):
+class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D20"""
     bl_idname = 'mesh.d20_add'
     bl_label = 'D20 Icosahedron'
@@ -1707,7 +1784,7 @@ class D20Generator(bpy.types.Operator):
         return execute_generator(self, context, Icosahedron, 'd20')
 
 
-class D10Generator(bpy.types.Operator):
+class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D10"""
     bl_idname = 'mesh.d10_add'
     bl_label = 'D10 Trapezohedron'
@@ -1748,7 +1825,7 @@ class D10Generator(bpy.types.Operator):
                                  number_v_offset=self.number_v_offset)
 
 
-class D100Generator(bpy.types.Operator):
+class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D100"""
     bl_idname = 'mesh.d100_add'
     bl_label = 'D100 Trapezohedron'
@@ -1855,6 +1932,7 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             die = mesh_cls(body_obj.name, size)
 
         die.dice_mesh = body_obj
+        configure_dice_finish_modifier(body_obj, settings_values.get("dice_finish", "sharp"))
 
         font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
