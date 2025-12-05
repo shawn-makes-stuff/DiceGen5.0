@@ -912,11 +912,11 @@ def create_svg_mesh(context, filepath, scale, depth, name):
                 continue
 
             for parent in bpy.data.collections:
-                if collection in parent.children:
+                if parent.children.get(collection.name):
                     parent.children.unlink(collection)
 
             for scene in bpy.data.scenes:
-                if collection in scene.collection.children:
+                if scene.collection.children.get(collection.name):
                     scene.collection.children.unlink(collection)
 
             try:
