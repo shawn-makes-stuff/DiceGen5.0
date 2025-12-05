@@ -934,9 +934,18 @@ def create_svg_mesh(context, filepath, scale, depth, name):
 
     mesh_objects = []
     for curve_obj in curve_objects:
+        curve_obj.data.materials.clear()
+        if hasattr(curve_obj.data, "color_attributes"):
+            for color_attr in list(curve_obj.data.color_attributes):
+                curve_obj.data.color_attributes.remove(color_attr)
+
         curve_obj.data.extrude = depth
 
         mesh = curve_obj.to_mesh().copy()
+        mesh.materials.clear()
+        if hasattr(mesh, "color_attributes"):
+            for color_attr in list(mesh.color_attributes):
+                mesh.color_attributes.remove(color_attr)
         new_obj = object_data_add(context, mesh, operator=None)
         mesh_objects.append(new_obj)
 
