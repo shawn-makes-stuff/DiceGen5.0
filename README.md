@@ -12,11 +12,6 @@ Afterwards you will be able to generate dice in `Add > Mesh > Dice`
 
 The add-on will create 2 objects, a blank dice mesh and the numbers. The blank dice object will have a boolean modifier that has the "Realtime" flag turned off for performance reasons. Turn that on to see the result in the viewport.
 
-
-### Engrave a custom image
-
-Use the **Custom Image (SVG)**, **Custom Image Face**, and **Custom Image Scale** properties to replace one of the generated numbers with your own SVG artwork. The image will be imported, scaled alongside the numbers, and extruded to match the configured number depth.
-
 ## Supported dice
 
 - D4 Tetrahedron
@@ -28,6 +23,13 @@ Use the **Custom Image (SVG)**, **Custom Image Face**, and **Custom Image Scale*
 - D100 Pentagonal Trepazohedron
 - D12 Dodecahedron
 - D20 Icosahedron
+
+
+### New features
+
+- Add a custom image to a face using an SVG
+- Set dice type to sharp, chamfer, or bevel (applies a bevel modifier)
+- Added new Dice Gen section to Object properties to allow quick configuration changes
 
 ## Tips
 
