@@ -721,6 +721,24 @@ def create_mesh(context, vertices, faces, name):
     return object_data_add(context, mesh, operator=None)
 
 
+def ensure_material(name, base_color):
+    material = bpy.data.materials.get(name)
+    if material is None:
+        material = bpy.data.materials.new(name=name)
+    material.use_nodes = True
+    if material.node_tree:
+        bsdf = material.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = base_color
+    return material
+
+
+def assign_material(obj, material):
+    if obj.data.materials:
+        obj.data.materials.clear()
+    obj.data.materials.append(material)
+
+
 def apply_transform(ob, use_location=False, use_rotation=False, use_scale=False):
     """
     https://blender.stackexchange.com/questions/159538/how-to-apply-all-transformations-to-an-object-at-low-level
@@ -892,28 +910,60 @@ def apply_boolean_modifier(body_object, numbers_object):
 
 def create_svg_mesh(context, filepath, scale, depth, name):
     existing_objects = set(bpy.data.objects)
+    existing_collections = set(bpy.data.collections)
+    new_collections = []
 
     try:
         bpy.ops.import_curve.svg(filepath=filepath)
     except (RuntimeError, OSError):
         return None
 
+    new_collections = [col for col in bpy.data.collections if col not in existing_collections]
     imported_objects = [ob for ob in bpy.data.objects if ob not in existing_objects]
     imported_object_names = [ob.name for ob in imported_objects]
     curve_object_names = [ob.name for ob in imported_objects if ob.type == 'CURVE']
     curve_objects = [bpy.data.objects[name] for name in curve_object_names if name in bpy.data.objects]
 
+    def cleanup_new_collections():
+        for collection in new_collections:
+            if collection.objects or collection.children:
+                continue
+
+            for parent in bpy.data.collections:
+                if parent.children.get(collection.name):
+                    parent.children.unlink(collection)
+
+            for scene in bpy.data.scenes:
+                if scene.collection.children.get(collection.name):
+                    scene.collection.children.unlink(collection)
+
+            try:
+                bpy.data.collections.remove(collection)
+            except RuntimeError:
+                # If the collection still has users for any reason, skip removal
+                pass
+
     if not curve_objects:
         for obj_name in imported_object_names:
             if obj_name in bpy.data.objects:
                 bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
+        cleanup_new_collections()
         return None
 
     mesh_objects = []
     for curve_obj in curve_objects:
+        curve_obj.data.materials.clear()
+        if hasattr(curve_obj.data, "color_attributes"):
+            for color_attr in list(curve_obj.data.color_attributes):
+                curve_obj.data.color_attributes.remove(color_attr)
+
         curve_obj.data.extrude = depth
 
         mesh = curve_obj.to_mesh().copy()
+        mesh.materials.clear()
+        if hasattr(mesh, "color_attributes"):
+            for color_attr in list(mesh.color_attributes):
+                mesh.color_attributes.remove(color_attr)
         new_obj = object_data_add(context, mesh, operator=None)
         mesh_objects.append(new_obj)
 
@@ -922,11 +972,14 @@ def create_svg_mesh(context, filepath, scale, depth, name):
             bpy.data.objects.remove(bpy.data.objects[curve_name], do_unlink=True)
 
     if not mesh_objects:
+        cleanup_new_collections()
         return None
 
     for obj_name in imported_object_names:
         if obj_name in bpy.data.objects:
             bpy.data.objects.remove(bpy.data.objects[obj_name], do_unlink=True)
+
+    cleanup_new_collections()
 
     svg_mesh = join(mesh_objects)
     svg_mesh.name = name
@@ -982,6 +1035,8 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_size,
     if len(number_objs):
         numbers = join(number_objs)
         apply_transform(numbers, use_rotation=True, use_location=True)
+        numbers_material = ensure_material("Dice Numbers", (0, 0, 0, 1))
+        assign_material(numbers, numbers_material)
         return numbers
 
     return None
@@ -1084,6 +1139,8 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     # create the cube mesh
     die = mesh_cls("dice_body", op.size, **kwargs)
     die_obj = die.create(context)
+    body_material = ensure_material("Dice Body", (0.95, 0.95, 0.9, 1))
+    assign_material(die_obj, body_material)
 
     settings_template = die_obj.dice_gen_settings
     settings_values = collect_settings_from_op(op, settings_template)
