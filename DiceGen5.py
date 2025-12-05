@@ -844,6 +844,7 @@ def validate_svg_path(filepath):
 
 SETTINGS_ATTRS = [
     "size",
+    "dice_finish",
     "font_path",
     "number_scale",
     "number_depth",
@@ -924,6 +925,27 @@ def apply_boolean_modifier(body_object, numbers_object):
 
     # remember the numbers object for regeneration
     body_object["dice_numbers_name"] = numbers_object.name
+
+
+def configure_dice_finish_modifier(body_object, dice_finish):
+    modifier_name = "dice_bevel"
+    bevel_modifier = body_object.modifiers.get(modifier_name)
+
+    if dice_finish == "sharp":
+        if bevel_modifier:
+            body_object.modifiers.remove(bevel_modifier)
+        return
+
+    if bevel_modifier is None:
+        bevel_modifier = body_object.modifiers.new(type='BEVEL', name=modifier_name)
+
+    bevel_modifier.limit_method = 'NONE'
+    bevel_modifier.use_clamp_overlap = False
+    bevel_modifier.width = 0.3
+    bevel_modifier.segments = 1 if dice_finish == "chamfer" else 5
+
+    if hasattr(bevel_modifier, "affect"):
+        bevel_modifier.affect = 'EDGES'
 
 
 def create_svg_mesh(context, filepath, scale, depth, name):
@@ -1157,6 +1179,7 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     # create the cube mesh
     die = mesh_cls("dice_body", op.size, **kwargs)
     die_obj = die.create(context)
+    configure_dice_finish_modifier(die_obj, op.dice_finish)
     body_material = ensure_material("Dice Body", (0.95, 0.95, 0.9, 1))
     assign_material(die_obj, body_material)
 
@@ -1202,6 +1225,19 @@ def Face2FaceProperty(default: float):
         soft_max=100,
         default=default,
         unit='LENGTH'
+    )
+
+
+def DiceFinishProperty():
+    return EnumProperty(
+        name='Dice Type',
+        items=(
+            ('sharp', 'Sharp', 'Keep edges sharp'),
+            ('chamfer', 'Chamfer', 'Add a light bevel'),
+            ('fillet', 'Fillet', 'Round edges with additional bevel segments'),
+        ),
+        default='sharp',
+        description='Edge treatment for the dice body'
     )
 
 
@@ -1343,6 +1379,69 @@ CenterBarProperty = BoolProperty(
 )
 
 
+def _has_prop(op, prop_name):
+    return prop_name in op.bl_rna.properties
+
+
+def _draw_prop_if_exists(op, layout, prop_name):
+    if _has_prop(op, prop_name):
+        layout.prop(op, prop_name)
+
+
+def draw_generator_ui(op, layout):
+    layout.prop(op, "dice_finish")
+
+    geometry_props = [
+        prop_name for prop_name in (
+            "base_height",
+            "point_height",
+            "top_point_height",
+            "bottom_point_height",
+            "height",
+        ) if _has_prop(op, prop_name)
+    ]
+
+    if geometry_props:
+        geometry_box = layout.box()
+        geometry_box.label(text="Geometry")
+        for prop_name in geometry_props:
+            geometry_box.prop(op, prop_name)
+
+    numbers_box = layout.box()
+    numbers_box.label(text="Numbers")
+
+    numbers_column = numbers_box.column()
+    if _has_prop(op, "add_numbers"):
+        numbers_box.prop(op, "add_numbers")
+        numbers_column.enabled = op.add_numbers
+
+    for prop_name in (
+        "number_scale",
+        "number_depth",
+        "font_path",
+        "custom_image_path",
+        "custom_image_face",
+        "custom_image_scale",
+    ):
+        _draw_prop_if_exists(op, numbers_column, prop_name)
+
+    if _has_prop(op, "number_indicator_type"):
+        numbers_column.prop(op, "number_indicator_type")
+        if getattr(op, "number_indicator_type", NUMBER_IND_NONE) != NUMBER_IND_NONE:
+            for prop_name in (
+                "period_indicator_scale",
+                "period_indicator_space",
+                "bar_indicator_height",
+                "bar_indicator_width",
+                "bar_indicator_space",
+                "center_bar",
+            ):
+                _draw_prop_if_exists(op, numbers_column, prop_name)
+
+    for prop_name in ("number_v_offset", "number_center_offset"):
+        _draw_prop_if_exists(op, numbers_column, prop_name)
+
+
 def NumberVOffsetProperty(default: float): return FloatProperty(
     name='Number V Offset',
     description='Vertical offset of the number positioning',
@@ -1365,6 +1464,8 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         default=20,
         unit='LENGTH',
     )
+
+    dice_finish: DiceFinishProperty()
 
     font_path: FontPathProperty
 
@@ -1461,7 +1562,14 @@ class DiceGenSettings(bpy.types.PropertyGroup):
     )
 
 
-class D4Generator(bpy.types.Operator):
+class DiceGeneratorBase:
+    dice_finish: DiceFinishProperty()
+
+    def draw(self, context):
+        draw_generator_ui(self, self.layout)
+
+
+class D4Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D4"""
     bl_idname = 'mesh.d4_add'
     bl_label = 'D4 Tetrahedron'
@@ -1511,7 +1619,7 @@ class D4Generator(bpy.types.Operator):
         return execute_generator(self, context, Tetrahedron, 'd4', number_center_offset=self.number_center_offset)
 
 
-class D4CrystalGenerator(bpy.types.Operator):
+class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D4 crystal"""
     bl_idname = 'mesh.d4_crystal_add'
     bl_label = 'D4 Crystal'
@@ -1558,7 +1666,7 @@ class D4CrystalGenerator(bpy.types.Operator):
                                  point_height=self.point_height)
 
 
-class D4ShardGenerator(bpy.types.Operator):
+class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D4 shard"""
     bl_idname = 'mesh.d4_shard_add'
     bl_label = 'D4 Shard'
@@ -1613,7 +1721,7 @@ class D4ShardGenerator(bpy.types.Operator):
                                  bottom_point_height=self.bottom_point_height, number_v_offset=self.number_v_offset)
 
 
-class D6Generator(bpy.types.Operator):
+class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D6"""
     bl_idname = 'mesh.d6_add'
     bl_label = 'D6 Cube'
@@ -1641,7 +1749,7 @@ class D6Generator(bpy.types.Operator):
         return execute_generator(self, context, Cube, 'd6')
 
 
-class D8Generator(bpy.types.Operator):
+class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D8"""
     bl_idname = 'mesh.d8_add'
     bl_label = 'D8 Octahedron'
@@ -1669,7 +1777,7 @@ class D8Generator(bpy.types.Operator):
         return execute_generator(self, context, Octahedron, 'd8')
 
 
-class D12Generator(bpy.types.Operator):
+class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D12"""
     bl_idname = 'mesh.d12_add'
     bl_label = 'D12 Dodecahedron'
@@ -1697,7 +1805,7 @@ class D12Generator(bpy.types.Operator):
         return execute_generator(self, context, Dodecahedron, 'd12')
 
 
-class D20Generator(bpy.types.Operator):
+class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D20"""
     bl_idname = 'mesh.d20_add'
     bl_label = 'D20 Icosahedron'
@@ -1725,7 +1833,7 @@ class D20Generator(bpy.types.Operator):
         return execute_generator(self, context, Icosahedron, 'd20')
 
 
-class D10Generator(bpy.types.Operator):
+class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D10"""
     bl_idname = 'mesh.d10_add'
     bl_label = 'D10 Trapezohedron'
@@ -1766,7 +1874,7 @@ class D10Generator(bpy.types.Operator):
                                  number_v_offset=self.number_v_offset)
 
 
-class D100Generator(bpy.types.Operator):
+class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     """Generate a D100"""
     bl_idname = 'mesh.d100_add'
     bl_label = 'D100 Trapezohedron'
@@ -1873,6 +1981,7 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             die = mesh_cls(body_obj.name, size)
 
         die.dice_mesh = body_obj
+        configure_dice_finish_modifier(body_obj, settings_values.get("dice_finish", "sharp"))
 
         font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
