@@ -987,11 +987,11 @@ def apply_bumpers_to_mesh(mesh_data, bumper_scale):
     rim_faces = [face for face in bm.faces if not face.tag]
 
     if extrude_amount > 0 and rim_faces:
+        rim_normals = [face.normal.copy() for face in rim_faces]
         extrude_result = bmesh.ops.extrude_discrete_faces(bm, faces=rim_faces)
         extruded_faces = extrude_result.get("faces", [])
 
-        for face in extruded_faces:
-            normal = face.normal.copy()
+        for face, normal in zip(extruded_faces, rim_normals):
             if normal.length == 0:
                 continue
 
