@@ -908,11 +908,22 @@ def create_svg_mesh(context, filepath, scale, depth, name):
 
     def cleanup_new_collections():
         for collection in new_collections:
-            if not collection.objects and not collection.children:
-                for scene in bpy.data.scenes:
-                    if collection in scene.collection.children:
-                        scene.collection.children.unlink(collection)
+            if collection.objects or collection.children:
+                continue
+
+            for parent in bpy.data.collections:
+                if collection in parent.children:
+                    parent.children.unlink(collection)
+
+            for scene in bpy.data.scenes:
+                if collection in scene.collection.children:
+                    scene.collection.children.unlink(collection)
+
+            try:
                 bpy.data.collections.remove(collection)
+            except RuntimeError:
+                # If the collection still has users for any reason, skip removal
+                pass
 
     if not curve_objects:
         for obj_name in imported_object_names:
