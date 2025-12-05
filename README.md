@@ -28,7 +28,8 @@ The add-on will create 2 objects, a blank dice mesh and the numbers. The blank d
 ### New features
 
 - Add a custom image to a face using an SVG
-- Set dice type to sharp, chamfer, or bevel (applies a bevel modifier)
+- Set dice type to sharp, chamfer, or bevel (these are done with a bevel modifier)
+- Set dice type bumper (creates a "cage" around the dice corners, modifies dice mesh)
 - Added new Dice Gen section to Object properties to allow quick configuration changes
 
 ## Tips
