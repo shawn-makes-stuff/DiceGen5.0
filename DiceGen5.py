@@ -882,6 +882,26 @@ def collect_settings_from_op(op, settings_template):
 
 
 def apply_settings(settings_obj, values):
+    values = dict(values)
+
+    def sanitize_installed_font(font_name):
+        available_fonts = {font.name for font in bpy.data.fonts}
+        if font_name in available_fonts:
+            return font_name
+
+        if bpy.data.fonts:
+            return bpy.data.fonts[0].name
+
+        try:
+            bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
+        except Exception:
+            pass
+
+        return bpy.data.fonts[0].name if bpy.data.fonts else ''
+
+    values["installed_font"] = sanitize_installed_font(values.get("installed_font", ""))
+    values["font_source"] = 'file' if values.get("font_path") else ('installed' if values.get("installed_font") else 'file')
+
     for key, value in values.items():
         setattr(settings_obj, key, value)
 
@@ -906,18 +926,26 @@ def resolve_settings_owner(obj):
     return None
 
 
-def get_font(filepath, font_source='file', installed_font=''):
-    if font_source == 'installed' and installed_font:
-        font = bpy.data.fonts.get(installed_font)
-        if font:
-            return font
+def determine_font_source(font_path, installed_font):
+    if font_path:
+        return 'file'
+    if installed_font:
+        return 'installed'
+    return 'file'
 
+
+def get_font(filepath, font_source='file', installed_font=''):
     if filepath:
         try:
             bpy.data.fonts.load(filepath=filepath, check_existing=True)
             return next(filter(lambda x: x.filepath == filepath, bpy.data.fonts))
         except (RuntimeError, OSError):
             pass
+
+    if font_source == 'installed' and installed_font:
+        font = bpy.data.fonts.get(installed_font)
+        if font:
+            return font
 
     bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
     return bpy.data.fonts[0]
@@ -1319,11 +1347,10 @@ def create_number(context, number, font_path, font_source, installed_font, font_
 
 
 def execute_generator(op, context, mesh_cls, name, **kwargs):
-    # set font to empty if it's not a supported font file
-    if op.font_source == 'file':
-        op.font_path = validate_font_path(op.font_path)
-    else:
-        op.font_path = ''
+    effective_font_source = determine_font_source(op.font_path, op.installed_font)
+    op.font_path = validate_font_path(op.font_path) if effective_font_source == 'file' else ''
+    op.font_source = effective_font_source
+    op.installed_font = op.installed_font if effective_font_source == 'installed' else op.installed_font
 
     op.custom_image_path = validate_svg_path(op.custom_image_path)
 
@@ -1453,6 +1480,11 @@ def FontSourceProperty():
 
 def InstalledFontProperty():
     def font_items(self, context):
+        try:
+            bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
+        except Exception:
+            pass
+
         fonts = []
         for font in bpy.data.fonts:
             label = font.name
@@ -1469,6 +1501,7 @@ def InstalledFontProperty():
         name='Installed Font',
         description='Choose from fonts already loaded in Blender',
         items=font_items,
+        default='Bfont'
     )
 
 CustomImagePathProperty = StringProperty(
@@ -1729,12 +1762,12 @@ class DiceGeneratorBase:
                     layout.prop(self, prop_name)
                     seen_props.add(prop_name)
 
-        if hasattr(self, "font_source"):
-            layout.prop(self, "font_source")
-            if getattr(self, "font_source", "file") == 'file':
-                layout.prop(self, "font_path")
-            else:
-                layout.prop(self, "installed_font")
+        if hasattr(self, "font_path"):
+            layout.prop(self, "font_path")
+        if hasattr(self, "installed_font"):
+            row = layout.row()
+            row.enabled = not bool(getattr(self, "font_path", ""))
+            row.prop(self, "installed_font")
 
 
 class D4Generator(DiceGeneratorBase, bpy.types.Operator):
@@ -2175,10 +2208,9 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             settings_values.get("bumper_scale", 1),
         )
 
-        if settings_values.get("font_source") == 'file':
-            font_path = validate_font_path(settings_values["font_path"]) if settings_values["font_path"] else ""
-        else:
-            font_path = ""
+        font_source = determine_font_source(settings_values.get("font_path", ""), settings_values.get("installed_font", ""))
+        font_path = validate_font_path(settings_values["font_path"]) if font_source == 'file' else ""
+        settings_values["font_source"] = font_source
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
         settings_values["custom_image_path"] = custom_image_path
 
@@ -2285,11 +2317,10 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
         settings = settings_owner.dice_gen_settings
 
         col = layout.column()
-        col.prop(settings, "font_source")
-        if settings.font_source == 'file':
-            col.prop(settings, "font_path")
-        else:
-            col.prop(settings, "installed_font")
+        col.prop(settings, "font_path")
+        row = col.row()
+        row.enabled = not bool(settings.font_path)
+        row.prop(settings, "installed_font")
         col.prop(settings, "custom_image_path")
         col.prop(settings, "custom_image_face")
         col.prop(settings, "custom_image_scale")
