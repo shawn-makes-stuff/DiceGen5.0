@@ -1,6 +1,7 @@
 import math
 import bpy
 import os
+import sys
 import bmesh
 from contextlib import contextmanager
 from typing import List
@@ -101,7 +102,7 @@ class Mesh:
     def get_number_rotations(self):
         return []
 
-    def create_numbers(self, context, size, number_scale, number_depth, font_path, font_source, installed_font, one_offset,
+    def create_numbers(self, context, size, number_scale, number_depth, font_path, installed_font, one_offset,
                        number_indicator_type=NUMBER_IND_NONE, period_indicator_scale=1, period_indicator_space=1,
                        bar_indicator_height=1, bar_indicator_width=1, bar_indicator_space=1,
                        center_bar=True, custom_image_face=0, custom_image_path='', custom_image_scale=1):
@@ -111,7 +112,7 @@ class Mesh:
 
         font_size = self.base_font_scale * size * number_scale
 
-        numbers_object = create_numbers(context, numbers, locations, rotations, font_path, font_source, installed_font,
+        numbers_object = create_numbers(context, numbers, locations, rotations, font_path, installed_font,
                                         font_size, number_depth, number_indicator_type, period_indicator_scale,
                                         period_indicator_space, bar_indicator_height, bar_indicator_width, bar_indicator_space,
                                         center_bar, one_offset, custom_image_face=custom_image_face,
@@ -850,7 +851,6 @@ SETTINGS_ATTRS = [
     "size",
     "dice_finish",
     "bumper_scale",
-    "font_source",
     "font_path",
     "installed_font",
     "number_scale",
@@ -884,36 +884,8 @@ def collect_settings_from_op(op, settings_template):
 def apply_settings(settings_obj, values):
     values = dict(values)
 
-    def resolve_font_by_identifier(font_identifier):
-        font = bpy.data.fonts.get(font_identifier)
-        if font:
-            return font
-
-        if '__dg_' in font_identifier:
-            base_identifier = font_identifier.split('__dg_', 1)[0]
-            font = bpy.data.fonts.get(base_identifier)
-            if font:
-                return font
-
-        return None
-
-    def sanitize_installed_font(font_identifier):
-        font = resolve_font_by_identifier(font_identifier)
-        if font:
-            return font.name
-
-        if bpy.data.fonts:
-            return bpy.data.fonts[0].name
-
-        try:
-            bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
-        except Exception:
-            pass
-
-        return bpy.data.fonts[0].name if bpy.data.fonts else ''
-
-    values["installed_font"] = sanitize_installed_font(values.get("installed_font", ""))
-    values["font_source"] = 'file' if values.get("font_path") else ('installed' if values.get("installed_font") else 'file')
+    values["font_path"] = validate_font_path(values.get("font_path", ""))
+    values["installed_font"] = validate_font_path(values.get("installed_font", ""))
 
     for key, value in values.items():
         setattr(settings_obj, key, value)
@@ -939,29 +911,14 @@ def resolve_settings_owner(obj):
     return None
 
 
-def determine_font_source(font_path, installed_font):
-    if font_path:
-        return 'file'
-    if installed_font:
-        return 'installed'
-    return 'file'
-
-
-def get_font(filepath, font_source='file', installed_font=''):
-    if filepath:
-        try:
-            bpy.data.fonts.load(filepath=filepath, check_existing=True)
-            return next(filter(lambda x: x.filepath == filepath, bpy.data.fonts))
-        except (RuntimeError, OSError):
-            pass
-
-    if font_source == 'installed' and installed_font:
-        font = bpy.data.fonts.get(installed_font)
-        if not font and '__dg_' in installed_font:
-            font = bpy.data.fonts.get(installed_font.split('__dg_', 1)[0])
-
-        if font:
-            return font
+def get_font(filepath='', installed_font=''):
+    for candidate in (validate_font_path(filepath), validate_font_path(installed_font)):
+        if candidate:
+            try:
+                bpy.data.fonts.load(filepath=candidate, check_existing=True)
+                return next(filter(lambda x: x.filepath == candidate, bpy.data.fonts))
+            except (RuntimeError, OSError):
+                continue
 
     bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
     return bpy.data.fonts[0]
@@ -1223,9 +1180,9 @@ def create_svg_mesh(context, filepath, scale, depth, name):
     return svg_mesh
 
 
-def create_text_mesh(context, text, font_path, font_source, installed_font, font_size, name, extrude=0):
+def create_text_mesh(context, text, font_path, installed_font, font_size, name, extrude=0):
     # load the font
-    font = get_font(font_path, font_source, installed_font)
+    font = get_font(font_path, installed_font)
 
     # create the text curve
     font_curve = bpy.data.curves.new(type='FONT', name=name)
@@ -1246,14 +1203,14 @@ def create_text_mesh(context, text, font_path, font_source, installed_font, font
     return object_data_add(context, mesh, operator=None)
 
 
-def create_numbers(context, numbers, locations, rotations, font_path, font_source, installed_font, font_size,
+def create_numbers(context, numbers, locations, rotations, font_path, installed_font, font_size,
                    number_depth, number_indicator_type, period_indicator_scale, period_indicator_space,
                    bar_indicator_height, bar_indicator_width, bar_indicator_space, center_bar, one_offset,
                    custom_image_face=0, custom_image_path='', custom_image_scale=1):
     number_objs = []
     # create the number meshes
     for i in range(len(locations)):
-        number_object = create_number(context, numbers[i], font_path, font_source, installed_font, font_size,
+        number_object = create_number(context, numbers[i], font_path, installed_font, font_size,
                                       number_depth, locations[i], rotations[i], number_indicator_type,
                                       period_indicator_scale, period_indicator_space, bar_indicator_height,
                                       bar_indicator_width, bar_indicator_space, center_bar, one_offset,
@@ -1272,7 +1229,7 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_sourc
     return None
 
 
-def create_number(context, number, font_path, font_source, installed_font, font_size, number_depth, location, rotation,
+def create_number(context, number, font_path, installed_font, font_size, number_depth, location, rotation,
                   number_indicator_type, period_indicator_scale, period_indicator_space, bar_indicator_height,
                   bar_indicator_width, bar_indicator_space, center_bar, one_offset, custom_image_face=0,
                   custom_image_path='', custom_image_scale=1, index=0):
@@ -1289,7 +1246,7 @@ def create_number(context, number, font_path, font_source, installed_font, font_
 
     if mesh_object is None:
         # add number
-        mesh_object = create_text_mesh(context, number, font_path, font_source, installed_font, font_size,
+        mesh_object = create_text_mesh(context, number, font_path, installed_font, font_size,
                                        f'number_{number}', number_depth)
 
     # set origin to bounding box center
@@ -1305,7 +1262,7 @@ def create_number(context, number, font_path, font_source, installed_font, font_
                 pass
         elif number in ('6', '9'):
             if number_indicator_type == NUMBER_IND_PERIOD:
-                p_obj = create_text_mesh(context, '.', font_path, font_source, installed_font,
+                p_obj = create_text_mesh(context, '.', font_path, installed_font,
                                          font_size * period_indicator_scale, f'period_{number}', number_depth)
 
                 # move origin of period to the bottom left corner of the mesh
@@ -1363,10 +1320,8 @@ def create_number(context, number, font_path, font_source, installed_font, font_
 
 
 def execute_generator(op, context, mesh_cls, name, **kwargs):
-    effective_font_source = determine_font_source(op.font_path, op.installed_font)
-    op.font_path = validate_font_path(op.font_path) if effective_font_source == 'file' else ''
-    op.font_source = effective_font_source
-    op.installed_font = op.installed_font if effective_font_source == 'installed' else op.installed_font
+    op.font_path = validate_font_path(op.font_path)
+    op.installed_font = validate_font_path(op.installed_font)
 
     op.custom_image_path = validate_svg_path(op.custom_image_path)
 
@@ -1385,13 +1340,13 @@ def execute_generator(op, context, mesh_cls, name, **kwargs):
     if op.add_numbers:
         if op.number_indicator_type == NUMBER_IND_NONE:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.font_source,
+                context, op.size, op.number_scale, op.number_depth, op.font_path,
                 op.installed_font, op.one_offset, custom_image_face=op.custom_image_face,
                 custom_image_path=op.custom_image_path, custom_image_scale=op.custom_image_scale
             )
         else:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.font_source,
+                context, op.size, op.number_scale, op.number_depth, op.font_path,
                 op.installed_font, op.one_offset, op.number_indicator_type, op.period_indicator_scale,
                 op.period_indicator_space, op.bar_indicator_height, op.bar_indicator_width,
                 op.bar_indicator_space, op.center_bar, custom_image_face=op.custom_image_face,
@@ -1480,54 +1435,63 @@ FontPathProperty = StringProperty(
     maxlen=1024,
     subtype='FILE_PATH'
 )
-
-
-def FontSourceProperty():
-    return EnumProperty(
-        name='Font Source',
-        items=(
-            ('file', 'Font File', 'Load a font from a file path'),
-            ('installed', 'Installed Font', 'Use a font that is already loaded in Blender'),
-        ),
-        default='file',
-        description='Choose whether to load a font from disk or an installed Blender font'
-    )
-
-
 def InstalledFontProperty():
     def font_items(self, context):
-        try:
-            bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
-        except Exception:
-            pass
+        font_dirs = set()
+        preferences = getattr(bpy.context, "preferences", None)
+        if preferences:
+            user_font_dir = getattr(preferences.filepaths, "font_directory", "")
+            if user_font_dir:
+                font_dirs.add(bpy.path.abspath(user_font_dir))
+
+        if sys.platform.startswith("win"):
+            windir = os.environ.get("WINDIR")
+            if windir:
+                font_dirs.add(os.path.join(windir, "Fonts"))
+        elif sys.platform == "darwin":
+            font_dirs.update({
+                "/System/Library/Fonts",
+                "/Library/Fonts",
+                os.path.expanduser("~/Library/Fonts"),
+            })
+        else:
+            font_dirs.update({
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                os.path.expanduser("~/.fonts"),
+                os.path.expanduser("~/.local/share/fonts"),
+            })
+
+        font_dirs = [directory for directory in font_dirs if directory and os.path.isdir(directory)]
 
         fonts = []
-        seen = set()
+        seen_paths = set()
 
-        for font in bpy.data.fonts:
-            identifier = font.name or os.path.basename(font.filepath) or 'Font'
-            label = identifier
-            if font.filepath:
-                label = f"{identifier} ({os.path.basename(font.filepath)})"
+        for directory in font_dirs:
+            for root, _, files in os.walk(directory):
+                for filename in files:
+                    extension = os.path.splitext(filename)[1].lower()
+                    if extension not in ('.ttf', '.otf'):
+                        continue
 
-            if identifier in seen:
-                suffix = 1
-                while f"{identifier}_{suffix}" in seen:
-                    suffix += 1
-                identifier = f"{identifier}_{suffix}"
+                    path = os.path.join(root, filename)
+                    if path in seen_paths:
+                        continue
 
-            seen.add(identifier)
-            fonts.append((identifier, label, font.filepath or 'Built-in font'))
+                    seen_paths.add(path)
+                    identifier = path
+                    name = os.path.splitext(filename)[0]
+                    label = f"{name} ({path})"
+                    fonts.append((identifier, label, path))
 
-        if not fonts or 'Bfont' not in seen:
-            fonts.insert(0, ('Bfont', 'Bfont', 'Built-in font'))
-            seen.add('Bfont')
+        fonts.sort(key=lambda item: item[1].lower())
+        fonts.insert(0, ('', 'Blender Default (Bfont)', 'Use Blender built-in font'))
 
         return fonts
 
     return EnumProperty(
         name='Installed Font',
-        description='Choose from fonts already loaded in Blender',
+        description='Choose from fonts installed on this system',
         items=font_items
     )
 
@@ -1663,8 +1627,6 @@ class DiceGenSettings(bpy.types.PropertyGroup):
     dice_finish: DiceFinishProperty()
 
     bumper_scale: BumperScaleProperty()
-
-    font_source: FontSourceProperty()
 
     font_path: FontPathProperty
 
@@ -1823,7 +1785,6 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
 
     number_depth: NumberDepthProperty
 
-    font_source: FontSourceProperty()
 
     font_path: FontPathProperty
 
@@ -1887,7 +1848,6 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -1943,7 +1903,6 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -1968,7 +1927,6 @@ class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -1998,7 +1956,6 @@ class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -2028,7 +1985,6 @@ class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -2058,7 +2014,6 @@ class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -2099,7 +2054,6 @@ class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     one_offset: OneOffsetProperty
@@ -2145,7 +2099,6 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     add_numbers: AddNumbersProperty
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
-    font_source: FontSourceProperty()
     font_path: FontPathProperty
     installed_font: InstalledFontProperty()
     number_v_offset: NumberVOffsetProperty(1 / 3)
@@ -2235,9 +2188,10 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             settings_values.get("bumper_scale", 1),
         )
 
-        font_source = determine_font_source(settings_values.get("font_path", ""), settings_values.get("installed_font", ""))
-        font_path = validate_font_path(settings_values["font_path"]) if font_source == 'file' else ""
-        settings_values["font_source"] = font_source
+        font_path = validate_font_path(settings_values.get("font_path", ""))
+        installed_font = validate_font_path(settings_values.get("installed_font", ""))
+        settings_values["font_path"] = font_path
+        settings_values["installed_font"] = installed_font
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
         settings_values["custom_image_path"] = custom_image_path
 
@@ -2252,8 +2206,7 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_scale"],
                         settings_values["number_depth"],
                         font_path,
-                        settings_values.get("font_source", "file"),
-                        settings_values.get("installed_font", ""),
+                        installed_font,
                         settings_values["one_offset"],
                         settings_values["number_indicator_type"],
                         settings_values["period_indicator_scale"],
@@ -2273,8 +2226,7 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_scale"],
                         settings_values["number_depth"],
                         font_path,
-                        settings_values.get("font_source", "file"),
-                        settings_values.get("installed_font", ""),
+                        installed_font,
                         settings_values["one_offset"],
                         custom_image_face=settings_values["custom_image_face"],
                         custom_image_path=custom_image_path,
