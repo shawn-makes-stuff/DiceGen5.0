@@ -3,6 +3,7 @@ import bpy
 import os
 import sys
 import bmesh
+import hashlib
 from contextlib import contextmanager
 from typing import List
 from math import sqrt, acos, pow
@@ -837,6 +838,95 @@ def validate_font_path(filepath):
     return filepath
 
 
+INSTALLED_FONT_MAP = {'': ''}
+
+
+def _installed_font_identifier(path: str) -> str:
+    return f"font_{hashlib.sha1(path.encode()).hexdigest()}"
+
+
+def _build_installed_font_items(current_value: str = ''):
+    INSTALLED_FONT_MAP.clear()
+    INSTALLED_FONT_MAP[''] = ''
+
+    font_dirs = set()
+    preferences = getattr(bpy.context, "preferences", None)
+    if preferences:
+        user_font_dir = getattr(preferences.filepaths, "font_directory", "")
+        if user_font_dir:
+            font_dirs.add(bpy.path.abspath(user_font_dir))
+
+    if sys.platform.startswith("win"):
+        windir = os.environ.get("WINDIR")
+        if windir:
+            font_dirs.add(os.path.join(windir, "Fonts"))
+    elif sys.platform == "darwin":
+        font_dirs.update({
+            "/System/Library/Fonts",
+            "/Library/Fonts",
+            os.path.expanduser("~/Library/Fonts"),
+        })
+    else:
+        font_dirs.update({
+            "/usr/share/fonts",
+            "/usr/local/share/fonts",
+            os.path.expanduser("~/.fonts"),
+            os.path.expanduser("~/.local/share/fonts"),
+        })
+
+    font_dirs = [directory for directory in font_dirs if directory and os.path.isdir(directory)]
+
+    fonts = []
+    seen_paths = set()
+
+    for directory in font_dirs:
+        for root, _, files in os.walk(directory):
+            for filename in files:
+                extension = os.path.splitext(filename)[1].lower()
+                if extension not in ('.ttf', '.otf'):
+                    continue
+
+                path = os.path.join(root, filename)
+                if path in seen_paths:
+                    continue
+
+                seen_paths.add(path)
+                identifier = _installed_font_identifier(path)
+                INSTALLED_FONT_MAP[identifier] = path
+                name = os.path.splitext(filename)[0]
+                label = f"{name} ({path})"
+                fonts.append((identifier, label, path))
+
+    fonts.sort(key=lambda item: item[1].lower())
+    fonts.insert(0, ('', 'Blender Default (Bfont)', 'Use Blender built-in font'))
+
+    if current_value and all(item[0] != current_value for item in fonts):
+        INSTALLED_FONT_MAP[current_value] = ''
+        fonts.append((current_value, 'Missing font (select another)', 'Previously saved font not found'))
+
+    return fonts
+
+
+def resolve_installed_font(identifier: str) -> str:
+    if not identifier:
+        return ''
+
+    if identifier not in INSTALLED_FONT_MAP:
+        _build_installed_font_items(identifier)
+
+    return INSTALLED_FONT_MAP.get(identifier, '')
+
+
+def sanitize_installed_font(identifier: str) -> str:
+    if not identifier:
+        return ''
+
+    if identifier not in INSTALLED_FONT_MAP:
+        _build_installed_font_items(identifier)
+
+    return identifier if INSTALLED_FONT_MAP.get(identifier) else ''
+
+
 def validate_svg_path(filepath):
     if filepath and not os.path.isfile(filepath):
         return ''
@@ -885,7 +975,7 @@ def apply_settings(settings_obj, values):
     values = dict(values)
 
     values["font_path"] = validate_font_path(values.get("font_path", ""))
-    values["installed_font"] = validate_font_path(values.get("installed_font", ""))
+    values["installed_font"] = sanitize_installed_font(values.get("installed_font", ""))
 
     for key, value in values.items():
         setattr(settings_obj, key, value)
@@ -912,7 +1002,8 @@ def resolve_settings_owner(obj):
 
 
 def get_font(filepath='', installed_font=''):
-    for candidate in (validate_font_path(filepath), validate_font_path(installed_font)):
+    resolved_installed = resolve_installed_font(installed_font)
+    for candidate in (validate_font_path(filepath), validate_font_path(resolved_installed)):
         if candidate:
             try:
                 bpy.data.fonts.load(filepath=candidate, check_existing=True)
@@ -1332,7 +1423,7 @@ def create_number(context, number, font_path, installed_font, font_size, number_
 
 def execute_generator(op, context, mesh_cls, name, **kwargs):
     op.font_path = validate_font_path(op.font_path)
-    op.installed_font = validate_font_path(op.installed_font)
+    op.installed_font = sanitize_installed_font(op.installed_font)
 
     op.custom_image_path = validate_svg_path(op.custom_image_path)
 
@@ -1448,57 +1539,8 @@ FontPathProperty = StringProperty(
 )
 def InstalledFontProperty():
     def font_items(self, context):
-        font_dirs = set()
-        preferences = getattr(bpy.context, "preferences", None)
-        if preferences:
-            user_font_dir = getattr(preferences.filepaths, "font_directory", "")
-            if user_font_dir:
-                font_dirs.add(bpy.path.abspath(user_font_dir))
-
-        if sys.platform.startswith("win"):
-            windir = os.environ.get("WINDIR")
-            if windir:
-                font_dirs.add(os.path.join(windir, "Fonts"))
-        elif sys.platform == "darwin":
-            font_dirs.update({
-                "/System/Library/Fonts",
-                "/Library/Fonts",
-                os.path.expanduser("~/Library/Fonts"),
-            })
-        else:
-            font_dirs.update({
-                "/usr/share/fonts",
-                "/usr/local/share/fonts",
-                os.path.expanduser("~/.fonts"),
-                os.path.expanduser("~/.local/share/fonts"),
-            })
-
-        font_dirs = [directory for directory in font_dirs if directory and os.path.isdir(directory)]
-
-        fonts = []
-        seen_paths = set()
-
-        for directory in font_dirs:
-            for root, _, files in os.walk(directory):
-                for filename in files:
-                    extension = os.path.splitext(filename)[1].lower()
-                    if extension not in ('.ttf', '.otf'):
-                        continue
-
-                    path = os.path.join(root, filename)
-                    if path in seen_paths:
-                        continue
-
-                    seen_paths.add(path)
-                    identifier = path
-                    name = os.path.splitext(filename)[0]
-                    label = f"{name} ({path})"
-                    fonts.append((identifier, label, path))
-
-        fonts.sort(key=lambda item: item[1].lower())
-        fonts.insert(0, ('', 'Blender Default (Bfont)', 'Use Blender built-in font'))
-
-        return fonts
+        current_value = getattr(self, "installed_font", "") if self else ""
+        return _build_installed_font_items(current_value)
 
     return EnumProperty(
         name='Installed Font',
@@ -1746,6 +1788,20 @@ class DiceGeneratorBase:
         layout.prop(self, "dice_finish")
 
         seen_props = {"dice_finish"}
+
+        if hasattr(self, "bumper_scale") and self.dice_finish == "bumpers":
+            layout.prop(self, "bumper_scale")
+            seen_props.add("bumper_scale")
+
+        if hasattr(self, "font_path"):
+            layout.prop(self, "font_path")
+            seen_props.add("font_path")
+        if hasattr(self, "installed_font"):
+            row = layout.row()
+            row.enabled = not bool(getattr(self, "font_path", ""))
+            row.prop(self, "installed_font")
+            seen_props.add("installed_font")
+
         for cls in reversed(type(self).mro()):
             annotations = getattr(cls, "__annotations__", {})
             for prop_name in annotations:
@@ -1755,19 +1811,9 @@ class DiceGeneratorBase:
                 if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
                     continue
 
-                if prop_name in {"font_path", "installed_font"}:
-                    continue
-
                 if hasattr(self, prop_name):
                     layout.prop(self, prop_name)
                     seen_props.add(prop_name)
-
-        if hasattr(self, "font_path"):
-            layout.prop(self, "font_path")
-        if hasattr(self, "installed_font"):
-            row = layout.row()
-            row.enabled = not bool(getattr(self, "font_path", ""))
-            row.prop(self, "installed_font")
 
 
 class D4Generator(DiceGeneratorBase, bpy.types.Operator):
@@ -2200,7 +2246,7 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
         )
 
         font_path = validate_font_path(settings_values.get("font_path", ""))
-        installed_font = validate_font_path(settings_values.get("installed_font", ""))
+        installed_font = sanitize_installed_font(settings_values.get("installed_font", ""))
         settings_values["font_path"] = font_path
         settings_values["installed_font"] = installed_font
         custom_image_path = validate_svg_path(settings_values["custom_image_path"]) if settings_values["custom_image_path"] else ""
