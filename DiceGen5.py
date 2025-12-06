@@ -826,12 +826,15 @@ def join(objects):
     return objects[0]
 
 
+FONT_EXTENSIONS = (".ttf", ".otf")
+
+
 def validate_font_path(filepath):
-    # set font to emtpy if it's not a ttf file
+    # set font to empty if it's not a supported font file
     if filepath and not os.path.isfile(filepath):
         return ''
 
-    if filepath and os.path.splitext(filepath)[1].lower() not in ('.ttf', '.otf'):
+    if filepath and os.path.splitext(filepath)[1].lower() not in FONT_EXTENSIONS:
         return ''
     return filepath
 
@@ -1311,7 +1314,7 @@ def create_number(context, number, font_path, font_size, number_depth, location,
 
 
 def execute_generator(op, context, mesh_cls, name, **kwargs):
-    # set font to emtpy if it's not a ttf file
+    # set font to empty if it's not a supported font file
     op.font_path = validate_font_path(op.font_path)
     op.custom_image_path = validate_svg_path(op.custom_image_path)
 
@@ -1421,7 +1424,7 @@ NumberDepthProperty = FloatProperty(
 
 FontPathProperty = StringProperty(
     name='Font',
-    description='Number font',
+    description='Number font (TTF or OTF)',
     maxlen=1024,
     subtype='FILE_PATH'
 )
