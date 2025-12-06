@@ -852,70 +852,73 @@ def _build_installed_font_items(current_value: str = ''):
         return _INSTALLED_FONT_CACHE
 
     new_map = {'': ''}
-    fonts = []
-    font_dirs = set()
-    preferences = getattr(bpy.context, "preferences", None)
-    if preferences:
-        user_font_dir = getattr(preferences.filepaths, "font_directory", "")
-        if user_font_dir:
-            font_dirs.add(bpy.path.abspath(user_font_dir))
-
-    if sys.platform.startswith("win"):
-        windir = os.environ.get("WINDIR")
-        if windir:
-            font_dirs.add(os.path.join(windir, "Fonts"))
-    elif sys.platform == "darwin":
-        font_dirs.update({
-            "/System/Library/Fonts",
-            "/Library/Fonts",
-            os.path.expanduser("~/Library/Fonts"),
-        })
-    else:
-        font_dirs.update({
-            "/usr/share/fonts",
-            "/usr/local/share/fonts",
-            os.path.expanduser("~/.fonts"),
-            os.path.expanduser("~/.local/share/fonts"),
-        })
-
-    font_dirs = [directory for directory in font_dirs if directory and os.path.isdir(directory)]
-
-    seen_paths = set()
+    fonts = [('', 'Blender Default (Bfont)', 'Use Blender built-in font')]
 
     try:
+        font_dirs = set()
+        preferences = getattr(bpy.context, "preferences", None)
+        if preferences:
+            user_font_dir = getattr(preferences.filepaths, "font_directory", "")
+            if user_font_dir:
+                font_dirs.add(bpy.path.abspath(user_font_dir))
+
+        if sys.platform.startswith("win"):
+            windir = os.environ.get("WINDIR")
+            if windir:
+                font_dirs.add(os.path.join(windir, "Fonts"))
+        elif sys.platform == "darwin":
+            font_dirs.update({
+                "/System/Library/Fonts",
+                "/Library/Fonts",
+                os.path.expanduser("~/Library/Fonts"),
+            })
+        else:
+            font_dirs.update({
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                os.path.expanduser("~/.fonts"),
+                os.path.expanduser("~/.local/share/fonts"),
+            })
+
+        font_dirs = [directory for directory in font_dirs if directory and os.path.isdir(directory)]
+
+        seen_paths = set()
         for directory in font_dirs:
-            for root, _, files in os.walk(directory, onerror=lambda _: None):
-                for filename in files:
-                    extension = os.path.splitext(filename)[1].lower()
-                    if extension not in ('.ttf', '.otf'):
-                        continue
+            try:
+                for root, _, files in os.walk(directory, onerror=lambda _: None):
+                    for filename in files:
+                        extension = os.path.splitext(filename)[1].lower()
+                        if extension not in ('.ttf', '.otf'):
+                            continue
 
-                    path = os.path.join(root, filename)
-                    if path in seen_paths:
-                        continue
+                        path = os.path.join(root, filename)
+                        if path in seen_paths:
+                            continue
 
-                    seen_paths.add(path)
-                    identifier = _installed_font_identifier(path)
-                    new_map[identifier] = path
-                    name = os.path.splitext(filename)[0]
-                    label = f"{name} ({path})"
-                    fonts.append((identifier, label, path))
+                        seen_paths.add(path)
+                        identifier = _installed_font_identifier(path)
+                        new_map[identifier] = path
+                        name = os.path.splitext(filename)[0]
+                        label = f"{name} ({path})"
+                        fonts.append((identifier, label, path))
+            except Exception:
+                # If a single directory traversal fails, continue with others
+                continue
     except Exception as exc:
         print(f"DiceGen: failed to enumerate installed fonts: {exc}")
 
-    fonts.sort(key=lambda item: item[1].lower())
-    fonts.insert(0, ('', 'Blender Default (Bfont)', 'Use Blender built-in font'))
+    sorted_fonts = [fonts[0]] + sorted(fonts[1:], key=lambda item: item[1].lower())
 
-    if current_value and all(item[0] != current_value for item in fonts):
+    if current_value and all(item[0] != current_value for item in sorted_fonts):
         new_map[current_value] = ''
-        fonts.append((current_value, 'Missing font (select another)', 'Previously saved font not found'))
+        sorted_fonts.append((current_value, 'Missing font (select another)', 'Previously saved font not found'))
 
     INSTALLED_FONT_MAP.clear()
     INSTALLED_FONT_MAP.update(new_map)
     _INSTALLED_FONT_CACHE.clear()
-    _INSTALLED_FONT_CACHE.extend(fonts)
+    _INSTALLED_FONT_CACHE.extend(sorted_fonts)
 
-    return fonts
+    return sorted_fonts
 
 
 def resolve_installed_font(identifier: str) -> str:
@@ -1012,18 +1015,40 @@ def resolve_settings_owner(obj):
     return None
 
 
+def _find_loaded_font(path: str):
+    for font in bpy.data.fonts:
+        if font.filepath == path:
+            return font
+    return None
+
+
 def get_font(filepath='', installed_font=''):
     resolved_installed = resolve_installed_font(installed_font)
     for candidate in (validate_font_path(filepath), validate_font_path(resolved_installed)):
-        if candidate:
-            try:
-                bpy.data.fonts.load(filepath=candidate, check_existing=True)
-                return next(filter(lambda x: x.filepath == candidate, bpy.data.fonts))
-            except Exception:
-                continue
+        if not candidate:
+            continue
+
+        loaded = _find_loaded_font(candidate)
+        if loaded:
+            return loaded
+
+        try:
+            bpy.data.fonts.load(filepath=candidate, check_existing=True)
+            loaded = _find_loaded_font(candidate)
+            if loaded:
+                return loaded
+        except Exception:
+            continue
+
+    built_in = _find_loaded_font('<builtin>')
+    if built_in:
+        return built_in
 
     try:
         bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
+        built_in = _find_loaded_font('<builtin>')
+        if built_in:
+            return built_in
     except Exception:
         pass
 
