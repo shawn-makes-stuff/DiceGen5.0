@@ -884,10 +884,23 @@ def collect_settings_from_op(op, settings_template):
 def apply_settings(settings_obj, values):
     values = dict(values)
 
-    def sanitize_installed_font(font_name):
-        available_fonts = {font.name for font in bpy.data.fonts}
-        if font_name in available_fonts:
-            return font_name
+    def resolve_font_by_identifier(font_identifier):
+        font = bpy.data.fonts.get(font_identifier)
+        if font:
+            return font
+
+        if '__dg_' in font_identifier:
+            base_identifier = font_identifier.split('__dg_', 1)[0]
+            font = bpy.data.fonts.get(base_identifier)
+            if font:
+                return font
+
+        return None
+
+    def sanitize_installed_font(font_identifier):
+        font = resolve_font_by_identifier(font_identifier)
+        if font:
+            return font.name
 
         if bpy.data.fonts:
             return bpy.data.fonts[0].name
@@ -944,6 +957,9 @@ def get_font(filepath, font_source='file', installed_font=''):
 
     if font_source == 'installed' and installed_font:
         font = bpy.data.fonts.get(installed_font)
+        if not font and '__dg_' in installed_font:
+            font = bpy.data.fonts.get(installed_font.split('__dg_', 1)[0])
+
         if font:
             return font
 
@@ -1486,22 +1502,33 @@ def InstalledFontProperty():
             pass
 
         fonts = []
-        for font in bpy.data.fonts:
-            label = font.name
-            if font.filepath:
-                label = f"{font.name} ({os.path.basename(font.filepath)})"
-            fonts.append((font.name, label, font.filepath or 'Built-in font'))
+        seen = set()
 
-        if not fonts:
-            fonts.append(('Bfont', 'Bfont', 'Built-in font'))
+        for font in bpy.data.fonts:
+            identifier = font.name or os.path.basename(font.filepath) or 'Font'
+            label = identifier
+            if font.filepath:
+                label = f"{identifier} ({os.path.basename(font.filepath)})"
+
+            if identifier in seen:
+                suffix = 1
+                while f"{identifier}_{suffix}" in seen:
+                    suffix += 1
+                identifier = f"{identifier}_{suffix}"
+
+            seen.add(identifier)
+            fonts.append((identifier, label, font.filepath or 'Built-in font'))
+
+        if not fonts or 'Bfont' not in seen:
+            fonts.insert(0, ('Bfont', 'Bfont', 'Built-in font'))
+            seen.add('Bfont')
 
         return fonts
 
     return EnumProperty(
         name='Installed Font',
         description='Choose from fonts already loaded in Blender',
-        items=font_items,
-        default='Bfont'
+        items=font_items
     )
 
 CustomImagePathProperty = StringProperty(
