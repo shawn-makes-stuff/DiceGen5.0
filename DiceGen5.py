@@ -839,6 +839,7 @@ def validate_font_path(filepath):
 
 
 INSTALLED_FONT_MAP = {'': ''}
+_INSTALLED_FONT_CACHE = [('','Blender Default (Bfont)','Use Blender built-in font')]
 
 
 def _installed_font_identifier(path: str) -> str:
@@ -846,9 +847,12 @@ def _installed_font_identifier(path: str) -> str:
 
 
 def _build_installed_font_items(current_value: str = ''):
-    INSTALLED_FONT_MAP.clear()
-    INSTALLED_FONT_MAP[''] = ''
+    # return cached results when possible to avoid repeated scans that can freeze Blender
+    if _INSTALLED_FONT_CACHE and not current_value:
+        return _INSTALLED_FONT_CACHE
 
+    new_map = {'': ''}
+    fonts = []
     font_dirs = set()
     preferences = getattr(bpy.context, "preferences", None)
     if preferences:
@@ -876,33 +880,40 @@ def _build_installed_font_items(current_value: str = ''):
 
     font_dirs = [directory for directory in font_dirs if directory and os.path.isdir(directory)]
 
-    fonts = []
     seen_paths = set()
 
-    for directory in font_dirs:
-        for root, _, files in os.walk(directory):
-            for filename in files:
-                extension = os.path.splitext(filename)[1].lower()
-                if extension not in ('.ttf', '.otf'):
-                    continue
+    try:
+        for directory in font_dirs:
+            for root, _, files in os.walk(directory, onerror=lambda _: None):
+                for filename in files:
+                    extension = os.path.splitext(filename)[1].lower()
+                    if extension not in ('.ttf', '.otf'):
+                        continue
 
-                path = os.path.join(root, filename)
-                if path in seen_paths:
-                    continue
+                    path = os.path.join(root, filename)
+                    if path in seen_paths:
+                        continue
 
-                seen_paths.add(path)
-                identifier = _installed_font_identifier(path)
-                INSTALLED_FONT_MAP[identifier] = path
-                name = os.path.splitext(filename)[0]
-                label = f"{name} ({path})"
-                fonts.append((identifier, label, path))
+                    seen_paths.add(path)
+                    identifier = _installed_font_identifier(path)
+                    new_map[identifier] = path
+                    name = os.path.splitext(filename)[0]
+                    label = f"{name} ({path})"
+                    fonts.append((identifier, label, path))
+    except Exception as exc:
+        print(f"DiceGen: failed to enumerate installed fonts: {exc}")
 
     fonts.sort(key=lambda item: item[1].lower())
     fonts.insert(0, ('', 'Blender Default (Bfont)', 'Use Blender built-in font'))
 
     if current_value and all(item[0] != current_value for item in fonts):
-        INSTALLED_FONT_MAP[current_value] = ''
+        new_map[current_value] = ''
         fonts.append((current_value, 'Missing font (select another)', 'Previously saved font not found'))
+
+    INSTALLED_FONT_MAP.clear()
+    INSTALLED_FONT_MAP.update(new_map)
+    _INSTALLED_FONT_CACHE.clear()
+    _INSTALLED_FONT_CACHE.extend(fonts)
 
     return fonts
 
@@ -1008,12 +1019,12 @@ def get_font(filepath='', installed_font=''):
             try:
                 bpy.data.fonts.load(filepath=candidate, check_existing=True)
                 return next(filter(lambda x: x.filepath == candidate, bpy.data.fonts))
-            except (RuntimeError, OSError):
+            except Exception:
                 continue
 
     try:
         bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
-    except (RuntimeError, OSError):
+    except Exception:
         pass
 
     for font in bpy.data.fonts:
