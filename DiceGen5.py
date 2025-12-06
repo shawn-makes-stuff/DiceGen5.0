@@ -839,7 +839,7 @@ def validate_font_path(filepath):
 
 
 INSTALLED_FONT_MAP = {'': ''}
-_INSTALLED_FONT_CACHE = [('','Blender Default (Bfont)','Use Blender built-in font')]
+_INSTALLED_FONT_CACHE = []
 
 
 def _installed_font_identifier(path: str) -> str:
