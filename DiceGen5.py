@@ -920,8 +920,19 @@ def get_font(filepath='', installed_font=''):
             except (RuntimeError, OSError):
                 continue
 
-    bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
-    return bpy.data.fonts[0]
+    try:
+        bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
+    except (RuntimeError, OSError):
+        pass
+
+    for font in bpy.data.fonts:
+        if not font.filepath or font.filepath == '<builtin>':
+            return font
+
+    if bpy.data.fonts:
+        return bpy.data.fonts[0]
+
+    raise RuntimeError('No fonts available to create dice numbers')
 
 
 def apply_boolean_modifier(body_object, numbers_object):
