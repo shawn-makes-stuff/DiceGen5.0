@@ -2075,6 +2075,7 @@ class VIEW3D_PT_dicegen5_settings(Panel):
         layout.label(text="Create Dice", icon='MESH_CUBE')
 
         dice_grid = layout.grid_flow(columns=2, even_columns=True, even_rows=True, align=True)
+        dice_grid.operator_context = 'INVOKE_DEFAULT'
         dice_grid.operator('mesh.d4_add', text='D4', icon='MESH_CONE')
         dice_grid.operator('mesh.d4_crystal_add', text='D4 Crystal', icon='META_CUBE')
         dice_grid.operator('mesh.d4_shard_add', text='D4 Shard', icon='MESH_ICOSPHERE')
@@ -2091,16 +2092,6 @@ class DiceGeneratorBase:
 
     dice_finish: DiceFinishProperty()
     bumper_scale: BumperScaleProperty()
-    ui_tab: EnumProperty(
-        name="Options",
-        items=(
-            ("DICE", "Dice", "Dice generation parameters"),
-            ("SETTINGS", "Saved Settings", "Reusable dice settings"),
-        ),
-        options={'SKIP_SAVE'},
-        default="DICE",
-    )
-
     def ensure_custom_image_face_default(self):
         if hasattr(self, "custom_image_face") and getattr(self, "custom_image_face", 0) == 0 and self.max_face_value:
             self.custom_image_face = self.max_face_value
@@ -2118,20 +2109,13 @@ class DiceGeneratorBase:
         layout.use_property_split = True
         layout.use_property_decorate = False
 
-        tabs = layout.row(align=True)
-        tabs.prop(self, "ui_tab", expand=True)
-
-        if self.ui_tab == "SETTINGS":
-            draw_reusable_settings(layout, getattr(context.scene, "dice_gen_settings", None))
-            return
-
         self.ensure_custom_image_face_default()
 
         layout.prop(self, "dice_finish")
         if self.dice_finish == "bumpers":
             layout.prop(self, "bumper_scale")
 
-        seen_props = {"dice_finish", "bumper_scale", "ui_tab"}
+        seen_props = {"dice_finish", "bumper_scale"}
         for cls in reversed(type(self).mro()):
             annotations = getattr(cls, "__annotations__", {})
             for prop_name in annotations:
@@ -2152,8 +2136,6 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_label = 'D4 Tetrahedron'
     bl_description = 'Generate a tetrahedron dice'
     bl_options = {'REGISTER', 'UNDO'}
-
-    number_indicator_type = NUMBER_IND_NONE
 
     max_face_value = 4
 
@@ -2177,13 +2159,16 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
     font_path: FontPathProperty
 
     custom_image_path: CustomImagePathProperty
-
     custom_image_face: CustomImageFaceProperty(4)
-
     custom_image_scale: CustomImageScaleProperty
-
     one_offset: OneOffsetProperty
-
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
     number_center_offset: FloatProperty(
         name='Number Center Offset',
         description='Distance of numbers from the center of a face',
@@ -2241,6 +2226,13 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     custom_image_path: CustomImagePathProperty
     custom_image_face: CustomImageFaceProperty(4)
     custom_image_scale: CustomImageScaleProperty
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
 
     def execute(self, context):
         return execute_generator(self, context, D4Crystal, 'd4Crystal', base_height=self.base_height,
@@ -2298,6 +2290,13 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     custom_image_path: CustomImagePathProperty
     custom_image_face: CustomImageFaceProperty(4)
     custom_image_scale: CustomImageScaleProperty
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
 
     def execute(self, context):
         return execute_generator(self, context, D4Shard, 'd4Shard', top_point_height=self.top_point_height,
@@ -2474,7 +2473,7 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_description = 'Generate an d100 trapezohedron dice'
     bl_options = {'REGISTER', 'UNDO'}
 
-    number_indicator_type = NUMBER_IND_NONE
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
     one_offset = 0
 
     max_face_value = 100
@@ -2496,6 +2495,12 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
     number_v_offset: NumberVOffsetProperty(1 / 3)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
     custom_image_face: CustomImageFaceProperty(100)
     custom_image_scale: CustomImageScaleProperty
