@@ -3,7 +3,7 @@ import bpy
 import os
 import bmesh
 from contextlib import contextmanager
-from typing import List
+from typing import List, Tuple, Optional, Dict, Any
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
 from bpy.types import Menu
@@ -27,10 +27,44 @@ NUMBER_IND_BAR = 'bar'
 NUMBER_IND_PERIOD = 'period'
 
 HALF_PI = math.pi / 2
+THIRD_PI = math.pi / 3
+QUARTER_PI = math.pi / 4
+SIXTH_PI = math.pi / 6
+
+# Empirically determined rotation angles for icosahedron number placement
+# These values were derived using Blender's alignment trick for D20 dice
+#
+# TODO: Calculate these values analytically instead of using empirical measurements
+# The analytical calculation should involve:
+# 1. Computing the dihedral angle between icosahedron faces
+# 2. Calculating the rotation needed to align numbers perpendicular to each face
+# 3. Accounting for the golden ratio relationships inherent in icosahedron geometry
+#
+# For reference, the icosahedron has a dihedral angle of ~138.19° (acos(-sqrt(5)/3))
+# and its geometry involves the golden ratio φ = (1 + sqrt(5)) / 2
+ICOSAHEDRON_ROTATION_ANGLES = {
+    'angle_1': 0.918438,  # ≈ 52.6°  - pitch angle for certain face orientations
+    'angle_2': 2.82743,   # ≈ 162°   - yaw angle for face alignment
+    'angle_3': 4.15881,   # ≈ 238.3° - roll angle for number orientation
+    'angle_4': 0.314159,  # ≈ 18°    - small pitch adjustment (~π/10)
+    'angle_5': 2.12437,   # ≈ 121.7° - complementary angle for opposite faces
+    'angle_6': 4.06003,   # ≈ 232.7° - large pitch for inverted faces
+    'angle_7': 2.22315,   # ≈ 127.4° - mid-range rotation angle
+    'angle_8': 1.01722,   # ≈ 58.3°  - standard face orientation offset
+}
 
 
-def leg_b(leg_a, h):
-    """given a leg of a right angle triangle and it's height, calculate the other leg"""
+def leg_b(leg_a: float, h: float) -> float:
+    """
+    Calculate the second leg of a right triangle given one leg and its height.
+
+    Args:
+        leg_a: Length of one leg of the right triangle
+        h: Height of the triangle
+
+    Returns:
+        Length of the other leg
+    """
     return sqrt(pow(h, 2) + (pow(h, 4) / (pow(leg_a, 2) - pow(h, 2))))
 
 
@@ -78,27 +112,73 @@ CONSTANTS['pentagonal_trap']['angle'].rotate(Euler((HALF_PI, 0, 0), 'XYZ'))
 
 
 class Mesh:
+    """
+    Base class for polyhedral dice mesh generation.
 
-    def __init__(self, name):
+    This class provides the foundation for creating different types of dice geometry
+    and handles number placement on dice faces.
+
+    Attributes:
+        vertices: List of vertex coordinates for the mesh
+        faces: List of face definitions (vertex indices)
+        name: Name of the mesh
+        dice_mesh: The created Blender mesh object
+        base_font_scale: Base scaling factor for numbers on this die type
+    """
+
+    def __init__(self, name: str):
+        """
+        Initialize the mesh generator.
+
+        Args:
+            name: Name for the mesh object
+        """
         self.vertices = None
         self.faces = None
         self.name = name
         self.dice_mesh = None
         self.base_font_scale = 1
 
-    def create(self, context):
+    def create(self, context) -> bpy.types.Object:
+        """
+        Create the dice mesh in Blender.
+
+        Args:
+            context: Blender context
+
+        Returns:
+            The created mesh object
+        """
         self.dice_mesh = create_mesh(context, self.vertices, self.faces, self.name)
         # reset transforms
         self.dice_mesh.matrix_world = Matrix()
         return self.dice_mesh
 
-    def get_numbers(self):
+    def get_numbers(self) -> List[str]:
+        """
+        Get the list of numbers to place on the dice faces.
+
+        Returns:
+            List of number strings
+        """
         return []
 
-    def get_number_locations(self):
+    def get_number_locations(self) -> List[Tuple[float, float, float]]:
+        """
+        Get the 3D positions for each number on the dice.
+
+        Returns:
+            List of (x, y, z) coordinate tuples
+        """
         return []
 
-    def get_number_rotations(self):
+    def get_number_rotations(self) -> List[Tuple[float, float, float]]:
+        """
+        Get the rotation angles for each number on the dice.
+
+        Returns:
+            List of (x, y, z) Euler angle tuples in radians
+        """
         return []
 
     def create_numbers(self, context, size, number_scale, number_depth, font_path, one_offset,
@@ -126,7 +206,22 @@ class Mesh:
 
 
 class Tetrahedron(Mesh):
-    def __init__(self, name, size, number_center_offset):
+    """
+    Tetrahedral dice (D4) mesh generator.
+
+    Creates a regular tetrahedron with numbers placed on each face.
+    The tetrahedron is oriented to stand on one face.
+    """
+
+    def __init__(self, name: str, size: float, number_center_offset: float):
+        """
+        Initialize a tetrahedron dice mesh.
+
+        Args:
+            name: Name for the mesh object
+            size: Face-to-point size of the tetrahedron
+            number_center_offset: How far numbers are offset from face centers (0=center, 1=vertex)
+        """
         super().__init__(name)
         self.size = size
         self.number_center_offset = number_center_offset
@@ -248,8 +343,21 @@ class D4Shard(Mesh):
 
 
 class Cube(Mesh):
+    """
+    Cubic dice (D6) mesh generator.
 
-    def __init__(self, name, size):
+    Creates a regular cube (hexahedron) with numbers 1-6 placed on each face.
+    Opposite faces sum to 7 following standard dice conventions.
+    """
+
+    def __init__(self, name: str, size: float):
+        """
+        Initialize a cube dice mesh.
+
+        Args:
+            name: Name for the mesh object
+            size: Face-to-face size of the cube
+        """
         super().__init__(name)
 
         # Calculate the necessary constants
@@ -476,96 +584,120 @@ class Icosahedron(Mesh):
         ]
 
     def get_number_rotations(self):
+        """
+        Calculate rotation angles for number placement on icosahedron faces.
+
+        Note: Some angles are empirically determined. See ICOSAHEDRON_ROTATION_ANGLES
+        for details and the TODO about calculating them analytically.
+
+        Returns:
+            List of rotation tuples (x, y, z) for each face
+        """
         angles = [Euler((0, 0, 0), 'XYZ') for _ in range(20)]
 
-        # TODO magic numbers copied out of blender with alignment trick, try to find exact equation
+        dihedral_half = (math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2
 
-        angles[0].x = -(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2
+        angles[0].x = -dihedral_half
 
-        angles[1].x = -0.918438
-        angles[1].y = -2.82743
-        angles[1].z = -4.15881
+        angles[1].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_1']
+        angles[1].y = -ICOSAHEDRON_ROTATION_ANGLES['angle_2']
+        angles[1].z = -ICOSAHEDRON_ROTATION_ANGLES['angle_3']
 
         angles[2].x = HALF_PI
-        angles[2].y = 5 / 6 * math.pi
-        angles[2].z = math.pi - ((math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2)
+        angles[2].y = 5 * SIXTH_PI
+        angles[2].z = math.pi - dihedral_half
 
         angles[3].x = HALF_PI
-        angles[3].y = -math.pi / 6
-        angles[3].z = (math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2
+        angles[3].y = -SIXTH_PI
+        angles[3].z = dihedral_half
 
-        angles[4].x = -0.918438
-        angles[4].y = -0.314159
-        angles[4].z = 2.12437
+        angles[4].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_1']
+        angles[4].y = -ICOSAHEDRON_ROTATION_ANGLES['angle_4']
+        angles[4].z = ICOSAHEDRON_ROTATION_ANGLES['angle_5']
 
         angles[5].x = HALF_PI
-        angles[5].y = math.pi / 3
+        angles[5].y = THIRD_PI
         angles[5].z = HALF_PI
-        angles[5].rotate(Euler((0, (math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2, 0), 'XYZ'))
+        angles[5].rotate(Euler((0, dihedral_half, 0), 'XYZ'))
 
-        angles[6].x = -0.918438
-        angles[6].y = 0.314159
-        angles[6].z = 1.01722
+        angles[6].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_1']
+        angles[6].y = ICOSAHEDRON_ROTATION_ANGLES['angle_4']
+        angles[6].z = ICOSAHEDRON_ROTATION_ANGLES['angle_8']
 
-        angles[7].x = -(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2
+        angles[7].x = -dihedral_half
         angles[7].y = math.pi
 
         angles[8].x = -HALF_PI
-        angles[8].y = -math.pi / 3
+        angles[8].y = -THIRD_PI
         angles[8].z = -HALF_PI
-        angles[8].rotate(Euler((0, -(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2, 0), 'XYZ'))
+        angles[8].rotate(Euler((0, -dihedral_half, 0), 'XYZ'))
 
-        angles[9].x = -4.06003
-        angles[9].y = 0.314159
-        angles[9].z = -2.12437
+        angles[9].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_6']
+        angles[9].y = ICOSAHEDRON_ROTATION_ANGLES['angle_4']
+        angles[9].z = -ICOSAHEDRON_ROTATION_ANGLES['angle_5']
 
-        angles[10].x = -0.918438
-        angles[10].y = 0.314159
-        angles[10].z = -2.12437
+        angles[10].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_1']
+        angles[10].y = ICOSAHEDRON_ROTATION_ANGLES['angle_4']
+        angles[10].z = -ICOSAHEDRON_ROTATION_ANGLES['angle_5']
 
         angles[11].x = HALF_PI
-        angles[11].y = -math.pi / 3
+        angles[11].y = -THIRD_PI
         angles[11].z = -HALF_PI
-        angles[11].rotate(Euler((0, -(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2, 0), 'XYZ'))
+        angles[11].rotate(Euler((0, -dihedral_half, 0), 'XYZ'))
 
-        angles[12].x = -(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2
+        angles[12].x = -dihedral_half
         angles[12].z = math.pi
 
-        angles[13].x = 2.22315
-        angles[13].y = 0.314159
-        angles[13].z = 1.01722
+        angles[13].x = ICOSAHEDRON_ROTATION_ANGLES['angle_7']
+        angles[13].y = ICOSAHEDRON_ROTATION_ANGLES['angle_4']
+        angles[13].z = ICOSAHEDRON_ROTATION_ANGLES['angle_8']
 
         angles[14].x = -HALF_PI
-        angles[14].y = math.pi / 3
+        angles[14].y = THIRD_PI
         angles[14].z = HALF_PI
-        angles[14].rotate(Euler((0, (math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2, 0), 'XYZ'))
+        angles[14].rotate(Euler((0, dihedral_half, 0), 'XYZ'))
 
-        angles[15].x = -0.918438
-        angles[15].y = -2.82743
-        angles[15].z = -1.01722
+        angles[15].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_1']
+        angles[15].y = -ICOSAHEDRON_ROTATION_ANGLES['angle_2']
+        angles[15].z = -ICOSAHEDRON_ROTATION_ANGLES['angle_8']
 
         angles[16].x = HALF_PI
-        angles[16].y = 7 / 6 * math.pi
-        angles[16].z = math.pi + ((math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2)
+        angles[16].y = 7 * SIXTH_PI
+        angles[16].z = math.pi + dihedral_half
 
         angles[17].x = HALF_PI
-        angles[17].y = math.pi / 6
-        angles[17].z = -(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2
+        angles[17].y = SIXTH_PI
+        angles[17].z = -dihedral_half
 
-        angles[18].x = -0.918438
-        angles[18].y = -0.314159
-        angles[18].z = -1.01722
+        angles[18].x = -ICOSAHEDRON_ROTATION_ANGLES['angle_1']
+        angles[18].y = -ICOSAHEDRON_ROTATION_ANGLES['angle_4']
+        angles[18].z = -ICOSAHEDRON_ROTATION_ANGLES['angle_8']
 
         angles[19].x = math.pi
-        angles[19].z = 2 / 3 * math.pi
-        angles[19].rotate(Euler((-(math.pi - CONSTANTS['icosahedron']['dihedral_angle']) / 2, 0, 0), 'XYZ'))
+        angles[19].z = 2 * THIRD_PI
+        angles[19].rotate(Euler((-dihedral_half, 0, 0), 'XYZ'))
 
         return [(a.x, a.y, a.z) for a in angles]
 
 
 class SquashedPentagonalTrapezohedron(Mesh):
+    """
+    Pentagonal trapezohedron mesh generator (base for D10 and D100).
 
-    def __init__(self, name, size, height, number_v_offset):
+    This shape has 10 kite-shaped faces and is the standard shape for d10 dice.
+    The shape can be "squashed" along the vertical axis by adjusting the height parameter.
+    """
+
+    def __init__(self, name: str, size: float, height: float, number_v_offset: float):
+        """
+        Initialize a pentagonal trapezohedron mesh.
+
+        Args:
+            name: Name for the mesh object
+            size: Face-to-face size of the die
+            height: Height scaling factor (1.0 = regular, <1.0 = squashed, >1.0 = elongated)
+            number_v_offset: Vertical offset for number placement (0=bottom, 1=top of face)
+        """
         super().__init__(name)
         self.size = size
         self.height = height
@@ -664,12 +796,25 @@ class D100Mesh(SquashedPentagonalTrapezohedron):
 
 
 def numbers(n: int) -> List[str]:
+    """
+    Generate a list of number strings from 1 to n.
+
+    Args:
+        n: The count of numbers to generate
+
+    Returns:
+        List of string numbers from "1" to str(n)
+    """
     return [str(i + 1) for i in range(n)]
 
 
-def set_origin(o, v):
+def set_origin(o: bpy.types.Object, v: Vector) -> None:
     """
-    set origin to a specific location
+    Set the origin of an object to a specific location.
+
+    Args:
+        o: The Blender object to modify
+        v: The new origin location as a Vector
     """
     me = o.data
     mw = o.matrix_world
@@ -679,7 +824,16 @@ def set_origin(o, v):
     mw.translation = mw @ v
 
 
-def _calculate_bounds(vertices):
+def _calculate_bounds(vertices) -> Optional[Tuple[float, float, float, float, float, float]]:
+    """
+    Calculate the bounding box of a mesh's vertices.
+
+    Args:
+        vertices: Iterator or collection of mesh vertices
+
+    Returns:
+        Tuple of (min_x, max_x, min_y, max_y, min_z, max_z) or None if no vertices
+    """
     iterator = iter(vertices)
     try:
         first_vertex = next(iterator)
@@ -702,11 +856,12 @@ def _calculate_bounds(vertices):
     return min_x, max_x, min_y, max_y, min_z, max_z
 
 
-def set_origin_center_bounds(o):
+def set_origin_center_bounds(o: bpy.types.Object) -> None:
     """
-    set an objects origin to the center of its bounding box
-    :param o:
-    :return:
+    Set an object's origin to the center of its bounding box.
+
+    Args:
+        o: The Blender object to modify
     """
     me = o.data
     bounds = _calculate_bounds(me.vertices)
@@ -717,11 +872,12 @@ def set_origin_center_bounds(o):
     set_origin(o, Vector(((min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2)))
 
 
-def set_origin_min_bounds(o):
+def set_origin_min_bounds(o: bpy.types.Object) -> None:
     """
-    set an objects origin to the bottom_left corner of its bounding box
-    :param o:
-    :return:
+    Set an object's origin to the bottom-left corner of its bounding box.
+
+    Args:
+        o: The Blender object to modify
     """
     me = o.data
     bounds = _calculate_bounds(me.vertices)
@@ -732,7 +888,20 @@ def set_origin_min_bounds(o):
     set_origin(o, Vector((min_x, min_y, (min_z + max_z) / 2)))
 
 
-def create_mesh(context, vertices, faces, name):
+def create_mesh(context, vertices: List[Tuple[float, float, float]],
+                faces: List[List[int]], name: str) -> bpy.types.Object:
+    """
+    Create a Blender mesh object from vertices and faces.
+
+    Args:
+        context: Blender context
+        vertices: List of vertex coordinates as (x, y, z) tuples
+        faces: List of face definitions (each face is a list of vertex indices)
+        name: Name for the mesh
+
+    Returns:
+        The created Blender object
+    """
     verts = [Vector(i) for i in vertices]
 
     # Blender can handle n-gons directly, no need for createPolys
@@ -743,7 +912,17 @@ def create_mesh(context, vertices, faces, name):
     return object_data_add(context, mesh, operator=None)
 
 
-def ensure_material(name, base_color):
+def ensure_material(name: str, base_color: Tuple[float, float, float, float]) -> bpy.types.Material:
+    """
+    Create or retrieve a material with the specified name and color.
+
+    Args:
+        name: Name of the material
+        base_color: RGBA color tuple (values 0.0-1.0)
+
+    Returns:
+        The material object
+    """
     material = bpy.data.materials.get(name)
     if material is None:
         material = bpy.data.materials.new(name=name)
@@ -755,20 +934,31 @@ def ensure_material(name, base_color):
     return material
 
 
-def assign_material(obj, material):
+def assign_material(obj: bpy.types.Object, material: bpy.types.Material) -> None:
+    """
+    Assign a material to an object, replacing any existing materials.
+
+    Args:
+        obj: The Blender object
+        material: The material to assign
+    """
     if obj.data.materials:
         obj.data.materials.clear()
     obj.data.materials.append(material)
 
 
-def apply_transform(ob, use_location=False, use_rotation=False, use_scale=False):
+def apply_transform(ob: bpy.types.Object, use_location: bool = False,
+                    use_rotation: bool = False, use_scale: bool = False) -> None:
     """
-    https://blender.stackexchange.com/questions/159538/how-to-apply-all-transformations-to-an-object-at-low-level
-    :param ob:
-    :param use_location:
-    :param use_rotation:
-    :param use_scale:
-    :return:
+    Apply transforms to an object at a low level without operators.
+
+    Based on: https://blender.stackexchange.com/questions/159538/
+
+    Args:
+        ob: The object to transform
+        use_location: Apply location transform
+        use_rotation: Apply rotation transform
+        use_scale: Apply scale transform
     """
     mb = ob.matrix_basis
     I = Matrix()
@@ -829,24 +1019,75 @@ def join(objects):
 FONT_EXTENSIONS = (".ttf", ".otf")
 
 
-def validate_font_path(filepath):
-    # set font to empty if it's not a supported font file
-    if filepath and not os.path.isfile(filepath):
+def validate_font_path(filepath: str) -> str:
+    """
+    Validate that a font file path exists and has a valid extension.
+
+    Args:
+        filepath: Path to the font file
+
+    Returns:
+        The filepath if valid, empty string otherwise
+    """
+    if not filepath:
         return ''
 
-    if filepath and os.path.splitext(filepath)[1].lower() not in FONT_EXTENSIONS:
+    if not os.path.isfile(filepath):
         return ''
+
+    if os.path.splitext(filepath)[1].lower() not in FONT_EXTENSIONS:
+        return ''
+
     return filepath
 
 
-def validate_svg_path(filepath):
-    if filepath and not os.path.isfile(filepath):
+def validate_svg_path(filepath: str) -> str:
+    """
+    Validate that an SVG file path exists and has the .svg extension.
+
+    Args:
+        filepath: Path to the SVG file
+
+    Returns:
+        The filepath if valid, empty string otherwise
+    """
+    if not filepath:
         return ''
 
-    if filepath and os.path.splitext(filepath)[1].lower() != '.svg':
+    if not os.path.isfile(filepath):
+        return ''
+
+    if os.path.splitext(filepath)[1].lower() != '.svg':
         return ''
 
     return filepath
+
+
+def validate_dice_parameters(size: float, number_depth: float, number_scale: float) -> Tuple[bool, str]:
+    """
+    Validate dice generation parameters to ensure they produce valid geometry.
+
+    Args:
+        size: The face-to-face size of the die
+        number_depth: Depth of number engravings
+        number_scale: Scale of the numbers
+
+    Returns:
+        Tuple of (is_valid, error_message). error_message is empty if valid.
+    """
+    if size <= 0:
+        return False, "Dice size must be greater than 0"
+
+    if number_depth < 0:
+        return False, "Number depth cannot be negative"
+
+    if number_depth >= size / 2:
+        return False, f"Number depth ({number_depth}) is too large for dice size ({size}). Should be less than {size/2}"
+
+    if number_scale <= 0:
+        return False, "Number scale must be greater than 0"
+
+    return True, ""
 
 
 SETTINGS_ATTRS = [
@@ -907,14 +1148,26 @@ def resolve_settings_owner(obj):
     return None
 
 
-def get_font(filepath):
+def get_font(filepath: str) -> bpy.types.VectorFont:
+    """
+    Load a font from a file path, falling back to Blender's default font if loading fails.
+
+    Args:
+        filepath: Path to the font file (TTF or OTF)
+
+    Returns:
+        The loaded font object
+    """
     if filepath:
         try:
             bpy.data.fonts.load(filepath=filepath, check_existing=True)
             return next(filter(lambda x: x.filepath == filepath, bpy.data.fonts))
-        except (RuntimeError, OSError):
-            pass
+        except (RuntimeError, OSError) as e:
+            print(f"Warning: Could not load font from '{filepath}': {e}. Using default font.")
+        except StopIteration:
+            print(f"Warning: Font loaded but not found in bpy.data.fonts: '{filepath}'. Using default font.")
 
+    # Fall back to Blender's built-in font
     bpy.data.fonts.load(filepath='<builtin>', check_existing=True)
     return bpy.data.fonts[0]
 
@@ -1175,7 +1428,22 @@ def create_svg_mesh(context, filepath, scale, depth, name):
     return svg_mesh
 
 
-def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
+def create_text_mesh(context, text: str, font_path: str, font_size: float,
+                     name: str, extrude: float = 0) -> bpy.types.Object:
+    """
+    Create a mesh object from text using a font.
+
+    Args:
+        context: Blender context
+        text: Text string to create
+        font_path: Path to font file (TTF or OTF)
+        font_size: Size of the font
+        name: Name for the created object
+        extrude: Extrusion depth for 3D text
+
+    Returns:
+        The created mesh object
+    """
     # load the font
     font = get_font(font_path)
 
@@ -1196,6 +1464,92 @@ def create_text_mesh(context, text, font_path, font_size, name, extrude=0):
     bpy.data.objects.remove(curve_obj)
     bpy.data.curves.remove(font_curve)
     return object_data_add(context, mesh, operator=None)
+
+
+def add_period_indicator(context, mesh_object: bpy.types.Object, number: str,
+                         font_path: str, font_size: float, number_depth: float,
+                         period_indicator_scale: float, period_indicator_space: float) -> bpy.types.Object:
+    """
+    Add a period indicator to numbers 6 and 9 for orientation.
+
+    Args:
+        context: Blender context
+        mesh_object: The number mesh to add indicator to
+        number: The number string ('6' or '9')
+        font_path: Path to font file
+        font_size: Base font size
+        number_depth: Depth of the number extrusion
+        period_indicator_scale: Scale factor for the period
+        period_indicator_space: Spacing between number and period
+
+    Returns:
+        The combined mesh object with period indicator
+    """
+    p_obj = create_text_mesh(context, '.', font_path, font_size * period_indicator_scale,
+                            f'period_{number}', number_depth)
+
+    # move origin of period to the bottom left corner of the mesh
+    set_origin_min_bounds(p_obj)
+
+    space = (1 / 20) * font_size * period_indicator_space
+
+    # move period to the bottom right of the number
+    p_obj.location = Vector((mesh_object.location.x + (mesh_object.dimensions.x / 2) + space,
+                             mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
+
+    # join the period to the number
+    return join([mesh_object, p_obj])
+
+
+def add_bar_indicator(context, mesh_object: bpy.types.Object, font_size: float,
+                      number_depth: float, bar_indicator_height: float,
+                      bar_indicator_width: float, bar_indicator_space: float,
+                      center_bar: bool) -> bpy.types.Object:
+    """
+    Add a bar indicator to numbers 6 and 9 for orientation.
+
+    Args:
+        context: Blender context
+        mesh_object: The number mesh to add indicator to
+        font_size: Base font size
+        number_depth: Depth of the number extrusion
+        bar_indicator_height: Height scale of the bar
+        bar_indicator_width: Width scale of the bar
+        bar_indicator_space: Spacing between number and bar
+        center_bar: Whether to center-align the bar with the number
+
+    Returns:
+        The combined mesh object with bar indicator
+    """
+    # create a simple rectangle
+    bar_width = mesh_object.dimensions.x * bar_indicator_width
+    bar_height = (1 / 15) * font_size * bar_indicator_height
+    bar_space = (1 / 20) * font_size * bar_indicator_space
+    bar_obj = create_mesh(context,
+                          [(-bar_width / 2, -bar_space, number_depth),
+                           (bar_width / 2, -bar_space, number_depth),
+                           (-bar_width / 2, -bar_space - bar_height, number_depth),
+                           (bar_width / 2, -bar_space - bar_height, number_depth),
+                           (-bar_width / 2, -bar_space, -number_depth),
+                           (bar_width / 2, -bar_space, -number_depth),
+                           (-bar_width / 2, -bar_space - bar_height, -number_depth),
+                           (bar_width / 2, -bar_space - bar_height, -number_depth)],
+                          [[0, 1, 3, 2], [2, 3, 7, 6], [3, 1, 5, 7], [1, 0, 4, 5], [0, 2, 6, 4], [4, 6, 7, 5]],
+                          'bar_indicator')
+
+    # move bar below the number
+    bar_obj.location = Vector(
+        (mesh_object.location.x, mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
+
+    # join the bar to the number
+    mesh_object = join([mesh_object, bar_obj])
+
+    # recenter the mesh
+    if center_bar:
+        mesh_object.location = Vector((0, 0, 0))
+        set_origin_center_bounds(mesh_object)
+
+    return mesh_object
 
 
 def create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth, number_indicator_type,
@@ -1247,57 +1601,21 @@ def create_number(context, number, font_path, font_size, number_depth, location,
     set_origin_center_bounds(mesh_object)
 
     if not use_custom_image:
-        if number == '1':
-            if one_offset > 0:
-                number_width = mesh_object.dimensions.x
-                new_origin = Vector((mesh_object.location.x + number_width * one_offset, mesh_object.location.y,
-                                     mesh_object.location.z))
-                set_origin(mesh_object, new_origin)
-                pass
+        if number == '1' and one_offset > 0:
+            # Offset the number 1 for alternative centering
+            number_width = mesh_object.dimensions.x
+            new_origin = Vector((mesh_object.location.x + number_width * one_offset, mesh_object.location.y,
+                                 mesh_object.location.z))
+            set_origin(mesh_object, new_origin)
         elif number in ('6', '9'):
+            # Add orientation indicators for 6 and 9
             if number_indicator_type == NUMBER_IND_PERIOD:
-                p_obj = create_text_mesh(context, '.', font_path, font_size * period_indicator_scale, f'period_{number}',
-                                         number_depth)
-
-                # move origin of period to the bottom left corner of the mesh
-                set_origin_min_bounds(p_obj)
-
-                space = (1 / 20) * font_size * period_indicator_space
-
-                # move period to the bottom right of the number
-                p_obj.location = Vector((mesh_object.location.x + (mesh_object.dimensions.x / 2) + space,
-                                         mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
-
-                # join the period to the number
-                mesh_object = join([mesh_object, p_obj])
+                mesh_object = add_period_indicator(context, mesh_object, number, font_path, font_size,
+                                                   number_depth, period_indicator_scale, period_indicator_space)
             elif number_indicator_type == NUMBER_IND_BAR:
-                # create a simple rectangle
-                bar_width = mesh_object.dimensions.x * bar_indicator_width
-                bar_height = (1 / 15) * font_size * bar_indicator_height
-                bar_space = (1 / 20) * font_size * bar_indicator_space
-                bar_obj = create_mesh(context,
-                                      [(-bar_width / 2, -bar_space, number_depth),
-                                       (bar_width / 2, -bar_space, number_depth),
-                                       (-bar_width / 2, -bar_space - bar_height, number_depth),
-                                       (bar_width / 2, -bar_space - bar_height, number_depth),
-                                       (-bar_width / 2, -bar_space, -number_depth),
-                                       (bar_width / 2, -bar_space, -number_depth),
-                                       (-bar_width / 2, -bar_space - bar_height, -number_depth),
-                                       (bar_width / 2, -bar_space - bar_height, -number_depth)],
-                                      [[0, 1, 3, 2], [2, 3, 7, 6], [3, 1, 5, 7], [1, 0, 4, 5], [0, 2, 6, 4], [4, 6, 7, 5]],
-                                      'bar_indicator')
-
-                # move bar below the number
-                bar_obj.location = Vector(
-                    (mesh_object.location.x, mesh_object.location.y - (mesh_object.dimensions.y / 2), 0))
-
-                # join the bar to the number
-                mesh_object = join([mesh_object, bar_obj])
-
-                # recenter the mesh
-                if center_bar:
-                    mesh_object.location = Vector((0, 0, 0))
-                    set_origin_center_bounds(mesh_object)
+                mesh_object = add_bar_indicator(context, mesh_object, font_size, number_depth,
+                                                bar_indicator_height, bar_indicator_width,
+                                                bar_indicator_space, center_bar)
 
     mesh_object.location.x = location[0]
     mesh_object.location.y = location[1]
@@ -1313,8 +1631,28 @@ def create_number(context, number, font_path, font_size, number_depth, location,
     return mesh_object
 
 
-def execute_generator(op, context, mesh_cls, name, **kwargs):
-    # set font to empty if it's not a supported font file
+def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, str]:
+    """
+    Main execution function for dice generation operators.
+
+    This function coordinates the entire dice generation process:
+    1. Validates input parameters
+    2. Creates the dice geometry
+    3. Applies finishing (bevel, bumpers, etc.)
+    4. Generates and applies numbers
+    5. Saves settings for regeneration
+
+    Args:
+        op: The operator instance containing user parameters
+        context: Blender context
+        mesh_cls: The Mesh subclass to instantiate (e.g., Cube, Icosahedron)
+        name: Base name for the dice type
+        **kwargs: Additional arguments to pass to the mesh_cls constructor
+
+    Returns:
+        Dictionary with 'FINISHED' status on success, 'CANCELLED' on failure
+    """
+    # Validate and sanitize file paths
     op.font_path = validate_font_path(op.font_path)
     op.custom_image_path = validate_svg_path(op.custom_image_path)
 
@@ -2193,6 +2531,7 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
         return resolve_settings_owner(context.object) is not None
 
     def draw(self, context):
+        """Draw the dice generation settings panel with organized property groups."""
         layout = self.layout
         settings_owner = resolve_settings_owner(context.object)
         if settings_owner is None:
@@ -2201,16 +2540,28 @@ class OBJECT_PT_dice_gen(bpy.types.Panel):
 
         settings = settings_owner.dice_gen_settings
 
-        col = layout.column()
-        col.prop(settings, "font_path")
-        col.prop(settings, "custom_image_path")
-        col.prop(settings, "custom_image_face")
-        col.prop(settings, "custom_image_scale")
-        col.prop(settings, "number_scale")
-        col.prop(settings, "number_depth")
+        # Font Settings
+        box = layout.box()
+        box.label(text="Font", icon='FONT_DATA')
+        box.prop(settings, "font_path")
+
+        # Number Settings
+        box = layout.box()
+        box.label(text="Numbers", icon='OUTLINER_OB_FONT')
+        box.prop(settings, "number_scale")
+        box.prop(settings, "number_depth")
+
+        # Custom Image Settings
+        box = layout.box()
+        box.label(text="Custom Image", icon='IMAGE_DATA')
+        box.prop(settings, "custom_image_path")
+        row = box.row()
+        row.enabled = bool(settings.custom_image_path)
+        row.prop(settings, "custom_image_face")
+        row.prop(settings, "custom_image_scale")
 
         layout.separator()
-        layout.operator("object.dice_gen_update", text="Regenerate Dice")
+        layout.operator("object.dice_gen_update", text="Regenerate Dice", icon='FILE_REFRESH')
 
 
 class MeshDiceAdd(Menu):
