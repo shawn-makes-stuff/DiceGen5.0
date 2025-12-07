@@ -1663,6 +1663,13 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
     Returns:
         Dictionary with 'FINISHED' status on success, 'CANCELLED' on failure
     """
+    scene_settings = getattr(context.scene, "dice_gen_settings", None)
+
+    # Always pre-seed operator properties from the persistent scene settings so
+    # clicking Create Dice never resets custom values back to defaults.
+    if scene_settings is not None:
+        apply_settings_to_operator(op, snapshot_settings(scene_settings))
+
     # Validate and sanitize file paths
     op.font_path = validate_font_path(op.font_path)
     op.custom_image_path = validate_svg_path(op.custom_image_path)
@@ -1702,7 +1709,6 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
 
     apply_settings(target_object.dice_gen_settings, settings_values)
 
-    scene_settings = getattr(context.scene, "dice_gen_settings", None)
     if scene_settings is not None:
         apply_settings(scene_settings, settings_values)
 
