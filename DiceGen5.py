@@ -1671,11 +1671,6 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
     """
     scene_settings = getattr(context.scene, "dice_gen_settings", None)
 
-    # Always pre-seed operator properties from the persistent scene settings so
-    # clicking Create Dice never resets custom values back to defaults.
-    if scene_settings is not None:
-        apply_settings_to_operator(op, snapshot_settings(scene_settings))
-
     # Validate and sanitize file paths
     op.font_path = validate_font_path(op.font_path)
     op.custom_image_path = validate_svg_path(op.custom_image_path)
@@ -2089,15 +2084,15 @@ class VIEW3D_PT_dicegen5_settings(Panel):
 
         dice_grid = layout.grid_flow(columns=3, even_columns=True, even_rows=True, align=True)
         dice_grid.operator_context = 'INVOKE_DEFAULT'
-        dice_grid.operator('mesh.d4_add', text='D4', icon='MESH_CONE')
-        dice_grid.operator('mesh.d4_crystal_add', text='D4 Crystal', icon='META_CUBE')
-        dice_grid.operator('mesh.d4_shard_add', text='D4 Shard', icon='MESH_ICOSPHERE')
-        dice_grid.operator('mesh.d6_add', text='D6', icon='MESH_CUBE')
-        dice_grid.operator('mesh.d8_add', text='D8', icon='MESH_UVSPHERE')
-        dice_grid.operator('mesh.d10_add', text='D10', icon='MESH_ICOSPHERE')
-        dice_grid.operator('mesh.d12_add', text='D12', icon='MESH_ICOSPHERE')
-        dice_grid.operator('mesh.d20_add', text='D20', icon='MESH_ICOSPHERE')
-        dice_grid.operator('mesh.d100_add', text='D100', icon='SURFACE_SPHERE')
+        dice_grid.operator('mesh.d4_add', text='D4')
+        dice_grid.operator('mesh.d4_crystal_add', text='D4 Crystal')
+        dice_grid.operator('mesh.d4_shard_add', text='D4 Shard')
+        dice_grid.operator('mesh.d6_add', text='D6')
+        dice_grid.operator('mesh.d8_add', text='D8')
+        dice_grid.operator('mesh.d10_add', text='D10')
+        dice_grid.operator('mesh.d12_add', text='D12')
+        dice_grid.operator('mesh.d20_add', text='D20')
+        dice_grid.operator('mesh.d100_add', text='D100')
 
 
 class DiceGeneratorBase:
