@@ -1122,9 +1122,15 @@ SETTINGS_ATTRS = [
 def collect_settings_from_op(op, settings_template, base_settings: Optional[Dict[str, Any]] = None):
     values = dict(base_settings or {attr: getattr(settings_template, attr) for attr in SETTINGS_ATTRS})
 
+    is_property_set = getattr(op, "is_property_set", None)
+
     for attr in SETTINGS_ATTRS:
         if hasattr(op, attr):
-            values[attr] = getattr(op, attr)
+            if callable(is_property_set):
+                if is_property_set(attr):
+                    values[attr] = getattr(op, attr)
+            else:
+                values[attr] = getattr(op, attr)
 
     return values
 
