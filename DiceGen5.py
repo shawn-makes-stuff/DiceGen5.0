@@ -1132,6 +1132,17 @@ def snapshot_settings(settings_obj):
     return {attr: getattr(settings_obj, attr) for attr in SETTINGS_ATTRS}
 
 
+def apply_settings_to_operator(op, values: Dict[str, Any]):
+    for key, value in values.items():
+        if hasattr(type(op), key):
+            try:
+                setattr(op, key, value)
+            except (TypeError, AttributeError):
+                # Some operator properties may reject incompatible values;
+                # skip those so the rest can still be applied.
+                continue
+
+
 def resolve_settings_owner(obj):
     if obj is None or not hasattr(obj, "dice_gen_settings"):
         return None
@@ -1691,6 +1702,10 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
 
     apply_settings(target_object.dice_gen_settings, settings_values)
 
+    scene_settings = getattr(context.scene, "dice_gen_settings", None)
+    if scene_settings is not None:
+        apply_settings(scene_settings, settings_values)
+
     return {'FINISHED'}
 
 
@@ -1774,13 +1789,14 @@ CustomImagePathProperty = StringProperty(
     subtype='FILE_PATH'
 )
 
-CustomImageFaceProperty = IntProperty(
-    name='Custom Image Face',
-    description='1-based face index to replace with the custom image (0 disables the feature)',
-    min=0,
-    soft_min=0,
-    default=0
-)
+def CustomImageFaceProperty(default: int = 0):
+    return IntProperty(
+        name='Custom Image Face',
+        description='1-based face index to replace with the custom image (0 disables the feature)',
+        min=0,
+        soft_min=0,
+        default=default
+    )
 
 CustomImageScaleProperty = FloatProperty(
     name='Custom Image Scale',
@@ -1904,7 +1920,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     custom_image_path: CustomImagePathProperty
 
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty()
 
     custom_image_scale: CustomImageScaleProperty
 
@@ -1995,23 +2011,105 @@ class DiceGenSettings(bpy.types.PropertyGroup):
     )
 
 
+def draw_reusable_settings(layout, settings: Optional[DiceGenSettings]):
+    layout.use_property_split = True
+    layout.use_property_decorate = False
+
+    if settings is None:
+        layout.label(text="Saved settings unavailable")
+        return
+
+    finish_box = layout.box()
+    finish_box.label(text="Finish", icon='MOD_BEVEL')
+    finish_box.prop(settings, "dice_finish")
+    bumper_row = finish_box.row()
+    bumper_row.enabled = settings.dice_finish == "bumpers"
+    bumper_row.prop(settings, "bumper_scale")
+
+    font_box = layout.box()
+    font_box.label(text="Font", icon='FONT_DATA')
+    font_box.prop(settings, "font_path")
+
+    number_box = layout.box()
+    number_box.label(text="Numbers", icon='OUTLINER_OB_FONT')
+    number_box.prop(settings, "add_numbers")
+    number_box.prop(settings, "number_scale")
+    number_box.prop(settings, "number_depth")
+    number_box.prop(settings, "one_offset")
+
+    indicator_box = layout.box()
+    indicator_box.label(text="Indicators", icon='LINENUMBERS_ON')
+    indicator_box.prop(settings, "number_indicator_type", expand=True)
+    if settings.number_indicator_type != NUMBER_IND_NONE:
+        indicator_box.prop(settings, "period_indicator_scale")
+        indicator_box.prop(settings, "period_indicator_space")
+        indicator_box.prop(settings, "bar_indicator_height")
+        indicator_box.prop(settings, "bar_indicator_width")
+        indicator_box.prop(settings, "bar_indicator_space")
+        indicator_box.prop(settings, "center_bar")
+
+    custom_box = layout.box()
+    custom_box.label(text="Custom Image", icon='IMAGE_DATA')
+    custom_box.prop(settings, "custom_image_path")
+    custom_row = custom_box.row()
+    custom_row.enabled = bool(settings.custom_image_path)
+    custom_row.prop(settings, "custom_image_face")
+    custom_row.prop(settings, "custom_image_scale")
+
+
 class DiceGeneratorBase:
+    max_face_value: int = 0
+
     dice_finish: DiceFinishProperty()
     bumper_scale: BumperScaleProperty()
+    ui_tab: EnumProperty(
+        name="Options",
+        items=(
+            ("DICE", "Dice", "Dice generation parameters"),
+            ("SETTINGS", "Saved Settings", "Reusable dice settings"),
+        ),
+        options={'SKIP_SAVE'},
+        default="DICE",
+    )
+
+    def ensure_custom_image_face_default(self):
+        if hasattr(self, "custom_image_face") and getattr(self, "custom_image_face", 0) == 0 and self.max_face_value:
+            self.custom_image_face = self.max_face_value
+
+    def invoke(self, context, event):
+        scene_settings = getattr(context.scene, "dice_gen_settings", None)
+        if scene_settings is not None:
+            apply_settings_to_operator(self, snapshot_settings(scene_settings))
+
+        self.ensure_custom_image_face_default()
+        return self.execute(context)
 
     def draw(self, context):
         layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        tabs = layout.row(align=True)
+        tabs.prop(self, "ui_tab", expand=True)
+
+        if self.ui_tab == "SETTINGS":
+            draw_reusable_settings(layout, getattr(context.scene, "dice_gen_settings", None))
+            return
+
+        self.ensure_custom_image_face_default()
 
         layout.prop(self, "dice_finish")
+        if self.dice_finish == "bumpers":
+            layout.prop(self, "bumper_scale")
 
-        seen_props = {"dice_finish"}
+        seen_props = {"dice_finish", "bumper_scale", "ui_tab"}
         for cls in reversed(type(self).mro()):
             annotations = getattr(cls, "__annotations__", {})
             for prop_name in annotations:
                 if prop_name in seen_props:
                     continue
 
-                if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
+                if prop_name == "bumper_scale":
                     continue
 
                 if hasattr(self, prop_name):
@@ -2027,6 +2125,8 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     number_indicator_type = NUMBER_IND_NONE
+
+    max_face_value = 4
 
     size: FloatProperty(
         name='Face2Point Length',
@@ -2049,7 +2149,7 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
 
     custom_image_path: CustomImagePathProperty
 
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(4)
 
     custom_image_scale: CustomImageScaleProperty
 
@@ -2077,6 +2177,8 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     number_indicator_type = NUMBER_IND_NONE
+
+    max_face_value = 4
 
     size: Face2FaceProperty(12)
 
@@ -2108,7 +2210,7 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     font_path: FontPathProperty
     one_offset: OneOffsetProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(4)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2124,6 +2226,8 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     number_indicator_type = NUMBER_IND_NONE
+
+    max_face_value = 4
 
     size: FloatProperty(
         name='Edge2edge length',
@@ -2163,7 +2267,7 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     one_offset: OneOffsetProperty
     number_v_offset: NumberVOffsetProperty(0.7)
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(4)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2177,6 +2281,8 @@ class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_label = 'D6 Cube'
     bl_description = 'Generate a cube dice'
     bl_options = {'REGISTER', 'UNDO'}
+
+    max_face_value = 6
 
     size: Face2FaceProperty(16)
     add_numbers: AddNumbersProperty
@@ -2192,7 +2298,7 @@ class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(6)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2205,6 +2311,8 @@ class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_label = 'D8 Octahedron'
     bl_description = 'Generate a octahedron dice'
     bl_options = {'REGISTER', 'UNDO'}
+
+    max_face_value = 8
 
     size: Face2FaceProperty(15)
     add_numbers: AddNumbersProperty
@@ -2220,7 +2328,7 @@ class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(12)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2233,6 +2341,8 @@ class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_label = 'D12 Dodecahedron'
     bl_description = 'Generate a dodecahedron dice'
     bl_options = {'REGISTER', 'UNDO'}
+
+    max_face_value = 12
 
     size: Face2FaceProperty(18)
     add_numbers: AddNumbersProperty
@@ -2248,7 +2358,7 @@ class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(12)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2261,6 +2371,8 @@ class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_label = 'D20 Icosahedron'
     bl_description = 'Generate an icosahedron dice'
     bl_options = {'REGISTER', 'UNDO'}
+
+    max_face_value = 20
 
     size: Face2FaceProperty(20)
     add_numbers: AddNumbersProperty
@@ -2276,7 +2388,7 @@ class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(20)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2289,6 +2401,8 @@ class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     bl_label = 'D10 Trapezohedron'
     bl_description = 'Generate an d10 trapezohedron dice'
     bl_options = {'REGISTER', 'UNDO'}
+
+    max_face_value = 10
 
     size: Face2FaceProperty(17)
 
@@ -2316,7 +2430,7 @@ class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(10)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2334,6 +2448,8 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     number_indicator_type = NUMBER_IND_NONE
     one_offset = 0
 
+    max_face_value = 100
+
     size: Face2FaceProperty(17)
 
     height: FloatProperty(
@@ -2352,7 +2468,7 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     font_path: FontPathProperty
     number_v_offset: NumberVOffsetProperty(1 / 3)
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(100)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2519,51 +2635,6 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class OBJECT_PT_dice_gen(bpy.types.Panel):
-    bl_label = "Dice Gen"
-    bl_idname = "OBJECT_PT_dice_gen"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = "object"
-
-    @classmethod
-    def poll(cls, context):
-        return resolve_settings_owner(context.object) is not None
-
-    def draw(self, context):
-        """Draw the dice generation settings panel with organized property groups."""
-        layout = self.layout
-        settings_owner = resolve_settings_owner(context.object)
-        if settings_owner is None:
-            layout.label(text="No dice settings found")
-            return
-
-        settings = settings_owner.dice_gen_settings
-
-        # Font Settings
-        box = layout.box()
-        box.label(text="Font", icon='FONT_DATA')
-        box.prop(settings, "font_path")
-
-        # Number Settings
-        box = layout.box()
-        box.label(text="Numbers", icon='OUTLINER_OB_FONT')
-        box.prop(settings, "number_scale")
-        box.prop(settings, "number_depth")
-
-        # Custom Image Settings
-        box = layout.box()
-        box.label(text="Custom Image", icon='IMAGE_DATA')
-        box.prop(settings, "custom_image_path")
-        row = box.row()
-        row.enabled = bool(settings.custom_image_path)
-        row.prop(settings, "custom_image_face")
-        row.prop(settings, "custom_image_scale")
-
-        layout.separator()
-        layout.operator("object.dice_gen_update", text="Regenerate Dice", icon='FILE_REFRESH')
-
-
 class MeshDiceAdd(Menu):
     """
     Dice menu under "Add Mesh"
@@ -2608,7 +2679,6 @@ classes = [
     D12Generator,
     D20Generator,
     OBJECT_OT_dice_gen_update,
-    OBJECT_PT_dice_gen
 ]
 
 
@@ -2618,6 +2688,7 @@ def register():
         register_class(cls)
 
     bpy.types.Object.dice_gen_settings = PointerProperty(type=DiceGenSettings)
+    bpy.types.Scene.dice_gen_settings = PointerProperty(type=DiceGenSettings)
 
     # Add "Dice" menu to the "Add Mesh" menu
     bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
@@ -2628,6 +2699,7 @@ def unregister():
     bpy.types.VIEW3D_MT_mesh_add.remove(menu_func)
 
     del bpy.types.Object.dice_gen_settings
+    del bpy.types.Scene.dice_gen_settings
 
     from bpy.utils import unregister_class
     for cls in reversed(classes):
