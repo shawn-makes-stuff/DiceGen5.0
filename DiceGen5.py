@@ -1119,8 +1119,14 @@ SETTINGS_ATTRS = [
 ]
 
 
-def collect_settings_from_op(op, settings_template):
-    return {attr: getattr(op, attr, getattr(settings_template, attr)) for attr in SETTINGS_ATTRS}
+def collect_settings_from_op(op, settings_template, base_settings: Optional[Dict[str, Any]] = None):
+    values = dict(base_settings or {attr: getattr(settings_template, attr) for attr in SETTINGS_ATTRS})
+
+    for attr in SETTINGS_ATTRS:
+        if hasattr(op, attr):
+            values[attr] = getattr(op, attr)
+
+    return values
 
 
 def apply_settings(settings_obj, values):
@@ -1682,7 +1688,8 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
     assign_material(die_obj, body_material)
 
     settings_template = die_obj.dice_gen_settings
-    settings_values = collect_settings_from_op(op, settings_template)
+    base_settings = snapshot_settings(scene_settings) if scene_settings is not None else None
+    settings_values = collect_settings_from_op(op, settings_template, base_settings)
 
     numbers_object = None
     # create number curves
@@ -2080,7 +2087,7 @@ class VIEW3D_PT_dicegen5_settings(Panel):
         layout.separator()
         layout.label(text="Create Dice", icon='MESH_CUBE')
 
-        dice_grid = layout.grid_flow(columns=2, even_columns=True, even_rows=True, align=True)
+        dice_grid = layout.grid_flow(columns=3, even_columns=True, even_rows=True, align=True)
         dice_grid.operator_context = 'INVOKE_DEFAULT'
         dice_grid.operator('mesh.d4_add', text='D4', icon='MESH_CONE')
         dice_grid.operator('mesh.d4_crystal_add', text='D4 Crystal', icon='META_CUBE')
@@ -2088,9 +2095,9 @@ class VIEW3D_PT_dicegen5_settings(Panel):
         dice_grid.operator('mesh.d6_add', text='D6', icon='MESH_CUBE')
         dice_grid.operator('mesh.d8_add', text='D8', icon='MESH_UVSPHERE')
         dice_grid.operator('mesh.d10_add', text='D10', icon='MESH_ICOSPHERE')
-        dice_grid.operator('mesh.d100_add', text='D100', icon='SURFACE_SPHERE')
         dice_grid.operator('mesh.d12_add', text='D12', icon='MESH_ICOSPHERE')
         dice_grid.operator('mesh.d20_add', text='D20', icon='MESH_ICOSPHERE')
+        dice_grid.operator('mesh.d100_add', text='D100', icon='SURFACE_SPHERE')
 
 
 class DiceGeneratorBase:
