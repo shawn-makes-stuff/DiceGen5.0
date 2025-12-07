@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from typing import List, Tuple, Optional, Dict, Any
 from math import sqrt, acos, pow
 from mathutils import Vector, Matrix, Euler
-from bpy.types import Menu
+from bpy.types import Menu, Panel
 from bpy.props import FloatProperty, BoolProperty, StringProperty, EnumProperty, PointerProperty, IntProperty
 from bpy_extras.object_utils import object_data_add
 
@@ -2057,6 +2057,35 @@ def draw_reusable_settings(layout, settings: Optional[DiceGenSettings]):
     custom_row.prop(settings, "custom_image_scale")
 
 
+class VIEW3D_PT_dicegen5_settings(Panel):
+    bl_label = "DiceGen5"
+    bl_idname = "VIEW3D_PT_dicegen5_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "DiceGen5"
+
+    def draw(self, context):
+        layout = self.layout
+
+        settings_box = layout.box()
+        settings_box.label(text="Saved Settings", icon='SETTINGS')
+        draw_reusable_settings(settings_box, getattr(context.scene, "dice_gen_settings", None))
+
+        layout.separator()
+        layout.label(text="Create Dice", icon='MESH_CUBE')
+
+        dice_grid = layout.grid_flow(columns=2, even_columns=True, even_rows=True, align=True)
+        dice_grid.operator('mesh.d4_add', text='D4', icon='MESH_CONE')
+        dice_grid.operator('mesh.d4_crystal_add', text='D4 Crystal', icon='META_CUBE')
+        dice_grid.operator('mesh.d4_shard_add', text='D4 Shard', icon='MESH_ICOSPHERE')
+        dice_grid.operator('mesh.d6_add', text='D6', icon='MESH_CUBE')
+        dice_grid.operator('mesh.d8_add', text='D8', icon='MESH_UVSPHERE')
+        dice_grid.operator('mesh.d10_add', text='D10', icon='MESH_ICOSPHERE')
+        dice_grid.operator('mesh.d100_add', text='D100', icon='SURFACE_SPHERE')
+        dice_grid.operator('mesh.d12_add', text='D12', icon='MESH_ICOSPHERE')
+        dice_grid.operator('mesh.d20_add', text='D20', icon='MESH_ICOSPHERE')
+
+
 class DiceGeneratorBase:
     max_face_value: int = 0
 
@@ -2668,6 +2697,7 @@ def menu_func(self, context):
 
 classes = [
     DiceGenSettings,
+    VIEW3D_PT_dicegen5_settings,
     MeshDiceAdd,
     D4Generator,
     D4CrystalGenerator,
