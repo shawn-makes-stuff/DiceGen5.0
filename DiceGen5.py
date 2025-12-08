@@ -1698,13 +1698,12 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
 def Face2FaceProperty(default: float):
     return FloatProperty(
         name='Face2face Length',
-        description='Face-to-face size of the die',
+        description='Face-to-face size of the die (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=default,
-        unit='LENGTH'
+        default=default
     )
 
 
@@ -1751,13 +1750,12 @@ NumberScaleProperty = FloatProperty(
 
 NumberDepthProperty = FloatProperty(
     name='Number Depth',
-    description='Depth of the numbers on the die',
+    description='Depth of the numbers on the die (mm)',
     min=0.1,
     soft_min=0.1,
     max=2,
     soft_max=2,
-    default=0.75,
-    unit='LENGTH'
+    default=0.75
 )
 
 FontPathProperty = StringProperty(
@@ -1774,13 +1772,18 @@ CustomImagePathProperty = StringProperty(
     subtype='FILE_PATH'
 )
 
-CustomImageFaceProperty = IntProperty(
-    name='Custom Image Face',
-    description='1-based face index to replace with the custom image (0 disables the feature)',
-    min=0,
-    soft_min=0,
-    default=0
-)
+def CustomImageFaceProperty(default=0):
+    """
+    Create a CustomImageFace property with configurable default.
+    Pass the highest face number for the dice type to default to that face.
+    """
+    return IntProperty(
+        name='Custom Image Face',
+        description='1-based face index to replace with the custom image (0 disables the feature)',
+        min=0,
+        soft_min=0,
+        default=default
+    )
 
 CustomImageScaleProperty = FloatProperty(
     name='Custom Image Scale',
@@ -1887,13 +1890,12 @@ def NumberVOffsetProperty(default: float): return FloatProperty(
 class DiceGenSettings(bpy.types.PropertyGroup):
     size: FloatProperty(
         name="Face2Face Length",
-        description="Face-to-face size of the die",
+        description="Face-to-face size of the die (mm)",
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=20,
-        unit='LENGTH',
+        default=20
     )
 
     dice_finish: DiceFinishProperty()
@@ -1904,7 +1906,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     custom_image_path: CustomImagePathProperty
 
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(0)
 
     custom_image_scale: CustomImageScaleProperty
 
@@ -1944,24 +1946,22 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     base_height: FloatProperty(
         name='Base Height',
-        description='Base height of the die (height of a face)',
+        description='Base height of the die (height of a face) (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=14,
-        unit='LENGTH',
+        default=14
     )
 
     point_height: FloatProperty(
         name='Point Height',
-        description='Point height of the die',
+        description='Point height of the die (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=7,
-        unit='LENGTH',
+        default=7
     )
 
     top_point_height: FloatProperty(
@@ -1999,6 +1999,66 @@ class DiceGeneratorBase:
     dice_finish: DiceFinishProperty()
     bumper_scale: BumperScaleProperty()
 
+    def invoke(self, context, event):
+        """Initialize operator properties from sidebar presets"""
+        presets = context.scene.dicegen_presets
+
+        # Copy common properties from presets
+        self.dice_finish = presets.dice_finish
+        self.bumper_scale = presets.bumper_scale
+
+        # Copy properties that exist on both presets and this operator
+        if hasattr(self, 'size'):
+            self.size = presets.size
+        if hasattr(self, 'add_numbers'):
+            self.add_numbers = presets.add_numbers
+        if hasattr(self, 'number_scale'):
+            self.number_scale = presets.number_scale
+        if hasattr(self, 'number_depth'):
+            self.number_depth = presets.number_depth
+        if hasattr(self, 'font_path'):
+            self.font_path = presets.font_path
+        if hasattr(self, 'one_offset'):
+            self.one_offset = presets.one_offset
+        if hasattr(self, 'number_indicator_type'):
+            self.number_indicator_type = presets.number_indicator_type
+        if hasattr(self, 'period_indicator_scale'):
+            self.period_indicator_scale = presets.period_indicator_scale
+        if hasattr(self, 'period_indicator_space'):
+            self.period_indicator_space = presets.period_indicator_space
+        if hasattr(self, 'bar_indicator_height'):
+            self.bar_indicator_height = presets.bar_indicator_height
+        if hasattr(self, 'bar_indicator_width'):
+            self.bar_indicator_width = presets.bar_indicator_width
+        if hasattr(self, 'bar_indicator_space'):
+            self.bar_indicator_space = presets.bar_indicator_space
+        if hasattr(self, 'center_bar'):
+            self.center_bar = presets.center_bar
+        if hasattr(self, 'custom_image_path'):
+            self.custom_image_path = presets.custom_image_path
+        if hasattr(self, 'custom_image_scale'):
+            self.custom_image_scale = presets.custom_image_scale
+        if hasattr(self, 'number_center_offset'):
+            self.number_center_offset = presets.number_center_offset
+        if hasattr(self, 'base_height'):
+            self.base_height = presets.base_height
+        if hasattr(self, 'point_height'):
+            self.point_height = presets.point_height
+        if hasattr(self, 'top_point_height'):
+            self.top_point_height = presets.top_point_height
+        if hasattr(self, 'bottom_point_height'):
+            self.bottom_point_height = presets.bottom_point_height
+        if hasattr(self, 'height'):
+            self.height = presets.height
+        if hasattr(self, 'number_v_offset'):
+            self.number_v_offset = presets.number_v_offset
+
+        # Don't copy custom_image_face from presets - each operator has the correct default
+        # (highest face number) already set in its property definition
+
+        # Call execute - the operator panel will show first due to bl_options REGISTER
+        return self.execute(context)
+
     def draw(self, context):
         layout = self.layout
 
@@ -2030,13 +2090,12 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
 
     size: FloatProperty(
         name='Face2Point Length',
-        description='Face-to-point size of the die',
+        description='Face-to-point size of the die (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=20,
-        unit='LENGTH'
+        default=20
     )
 
     add_numbers: AddNumbersProperty
@@ -2049,7 +2108,7 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
 
     custom_image_path: CustomImagePathProperty
 
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(4)
 
     custom_image_scale: CustomImageScaleProperty
 
@@ -2064,6 +2123,14 @@ class D4Generator(DiceGeneratorBase, bpy.types.Operator):
         soft_max=1,
         default=0.5
     )
+
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
 
     def execute(self, context):
         return execute_generator(self, context, Tetrahedron, 'd4', number_center_offset=self.number_center_offset)
@@ -2082,24 +2149,22 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
 
     base_height: FloatProperty(
         name='Base Height',
-        description='Base height of the die (height of a face)',
+        description='Base height of the die (height of a face) (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=14,
-        unit='LENGTH'
+        default=14
     )
 
     point_height: FloatProperty(
         name='Point Height',
-        description='Point height of the die',
+        description='Point height of the die (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=7,
-        unit='LENGTH'
+        default=7
     )
 
     add_numbers: AddNumbersProperty
@@ -2107,8 +2172,15 @@ class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
     one_offset: OneOffsetProperty
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(4)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2127,13 +2199,12 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
 
     size: FloatProperty(
         name='Edge2edge length',
-        description='Distance between 2 opposite horizontal edges',
+        description='Distance between 2 opposite horizontal edges (mm)',
         min=1,
         soft_min=1,
         max=100,
         soft_max=100,
-        default=12,
-        unit='LENGTH'
+        default=12
     )
 
     top_point_height: FloatProperty(
@@ -2161,9 +2232,16 @@ class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
     one_offset: OneOffsetProperty
-    number_v_offset: NumberVOffsetProperty(0.7)
+    number_v_offset: NumberVOffsetProperty(0.75)
+    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(4)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2192,7 +2270,7 @@ class D6Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(6)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2220,7 +2298,7 @@ class D8Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(8)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2248,7 +2326,7 @@ class D12Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(12)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2276,7 +2354,7 @@ class D20Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(20)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2316,7 +2394,7 @@ class D10Generator(DiceGeneratorBase, bpy.types.Operator):
     bar_indicator_space: BarIndicatorSpaceProperty
     center_bar: CenterBarProperty
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(10)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2352,7 +2430,7 @@ class D100Generator(DiceGeneratorBase, bpy.types.Operator):
     font_path: FontPathProperty
     number_v_offset: NumberVOffsetProperty(1 / 3)
     custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty
+    custom_image_face: CustomImageFaceProperty(10)
     custom_image_scale: CustomImageScaleProperty
 
     def execute(self, context):
@@ -2595,8 +2673,472 @@ def menu_func(self, context):
     layout.menu('VIEW3D_MT_mesh_dice_add', text='Dice', icon='CUBE')
 
 
+class DiceGenPresets(bpy.types.PropertyGroup):
+    """PropertyGroup to store persistent dice generation settings in the scene"""
+
+    dice_finish: DiceFinishProperty()
+    bumper_scale: BumperScaleProperty()
+
+    size: FloatProperty(
+        name="Face2Face Length",
+        description="Face-to-face size of the die (mm)",
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=20
+    )
+
+    add_numbers: AddNumbersProperty
+    number_scale: NumberScaleProperty
+    number_depth: NumberDepthProperty
+    font_path: FontPathProperty
+    one_offset: OneOffsetProperty
+
+    number_indicator_type: NumberIndicatorTypeProperty()
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
+
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: CustomImageFaceProperty(20)
+    custom_image_scale: CustomImageScaleProperty
+
+    number_center_offset: FloatProperty(
+        name='Number Center Offset',
+        description='Distance of numbers from the center of a face (D4 only)',
+        min=0.0,
+        soft_min=0.0,
+        max=1,
+        soft_max=1,
+        default=0.5
+    )
+
+    # Geometry-specific properties
+    base_height: FloatProperty(
+        name='Base Height',
+        description='Base height of the die (D4 Crystal) (mm)',
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=14
+    )
+    point_height: FloatProperty(
+        name='Point Height',
+        description='Point height of the die (D4 Crystal) (mm)',
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=7
+    )
+    top_point_height: FloatProperty(
+        name='Top Point Height',
+        description='Top point height of the die (D4 Shard)',
+        min=0.25,
+        soft_min=0.25,
+        max=2,
+        soft_max=2,
+        default=0.75
+    )
+    bottom_point_height: FloatProperty(
+        name='Bottom Point Height',
+        description='Bottom point height of the die (D4 Shard)',
+        min=0.25,
+        soft_min=0.25,
+        max=2.5,
+        soft_max=2.5,
+        default=1.75
+    )
+    height: FloatProperty(
+        name='Dice Height',
+        description='Height of the die (D10/D100)',
+        min=0.45,
+        soft_min=0.45,
+        max=2,
+        soft_max=2,
+        default=2 / 3
+    )
+    number_v_offset: FloatProperty(
+        name='Number Vertical Offset',
+        description='Vertical offset of numbers (D4 Shard, D10, D100)',
+        min=0,
+        soft_min=0,
+        max=1,
+        soft_max=1,
+        default=0.75
+    )
+
+
+class DICE_OT_add_from_preset(bpy.types.Operator):
+    """Add a dice to the scene using preset settings"""
+    bl_idname = 'dicegen.add_from_preset'
+    bl_label = 'Add Dice'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    dice_type: EnumProperty(
+        name="Dice Type",
+        items=[
+            ('D4', 'D4', 'Tetrahedron'),
+            ('D4_CRYSTAL', 'D4 Crystal', 'Crystal D4'),
+            ('D4_SHARD', 'D4 Shard', 'Shard D4'),
+            ('D6', 'D6', 'Cube'),
+            ('D8', 'D8', 'Octahedron'),
+            ('D10', 'D10', 'Trapezohedron'),
+            ('D12', 'D12', 'Dodecahedron'),
+            ('D20', 'D20', 'Icosahedron'),
+            ('D100', 'D100', 'Trapezohedron'),
+        ]
+    )
+
+    # Properties from presets - these will override preset values when set
+    dice_finish: DiceFinishProperty()
+    bumper_scale: BumperScaleProperty()
+    size: FloatProperty(
+        name="Face2Face Length",
+        description="Face-to-face size of the die (mm)",
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=20
+    )
+    add_numbers: AddNumbersProperty
+    number_scale: NumberScaleProperty
+    number_depth: NumberDepthProperty
+    font_path: FontPathProperty
+    one_offset: OneOffsetProperty
+    number_indicator_type: NumberIndicatorTypeProperty()
+    period_indicator_scale: PeriodIndicatorScaleProperty
+    period_indicator_space: PeriodIndicatorSpaceProperty
+    bar_indicator_height: BarIndicatorHeightProperty
+    bar_indicator_width: BarIndicatorWidthProperty
+    bar_indicator_space: BarIndicatorSpaceProperty
+    center_bar: CenterBarProperty
+    custom_image_path: CustomImagePathProperty
+    custom_image_face: IntProperty(
+        name='Custom Image Face',
+        description='1-based face index to replace with the custom image (0 disables the feature)',
+        min=0,
+        soft_min=0,
+        default=0
+    )
+    custom_image_scale: CustomImageScaleProperty
+
+    # Geometry-specific properties
+    number_center_offset: FloatProperty(
+        name='Number Center Offset',
+        description='Distance of numbers from the center of a face (D4 only)',
+        min=0.0,
+        soft_min=0.0,
+        max=1,
+        soft_max=1,
+        default=0.5
+    )
+    base_height: FloatProperty(
+        name='Base Height',
+        description='Base height of the die (D4 Crystal) (mm)',
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=14
+    )
+    point_height: FloatProperty(
+        name='Point Height',
+        description='Point height of the die (D4 Crystal) (mm)',
+        min=1,
+        soft_min=1,
+        max=100,
+        soft_max=100,
+        default=7
+    )
+    top_point_height: FloatProperty(
+        name='Top Point Height',
+        description='Top point height of the die (D4 Shard)',
+        min=0.25,
+        soft_min=0.25,
+        max=2,
+        soft_max=2,
+        default=0.75
+    )
+    bottom_point_height: FloatProperty(
+        name='Bottom Point Height',
+        description='Bottom point height of the die (D4 Shard)',
+        min=0.25,
+        soft_min=0.25,
+        max=2.5,
+        soft_max=2.5,
+        default=1.75
+    )
+    height: FloatProperty(
+        name='Dice Height',
+        description='Height of the die (D10/D100)',
+        min=0.45,
+        soft_min=0.45,
+        max=2,
+        soft_max=2,
+        default=2 / 3
+    )
+    number_v_offset: FloatProperty(
+        name='Number Vertical Offset',
+        description='Vertical offset of numbers (D4 Shard, D10, D100)',
+        min=0,
+        soft_min=0,
+        max=1,
+        soft_max=1,
+        default=0.75
+    )
+
+    def draw(self, context):
+        """Draw the operator panel with all dice options - matches Add Mesh > Dice panels"""
+        layout = self.layout
+
+        # Use the same automatic property display as DiceGeneratorBase
+        layout.prop(self, "dice_finish")
+
+        seen_props = {"dice_finish", "dice_type"}  # Skip dice_type enum
+        for cls in reversed(type(self).mro()):
+            annotations = getattr(cls, "__annotations__", {})
+            for prop_name in annotations:
+                if prop_name in seen_props:
+                    continue
+
+                if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
+                    continue
+
+                if hasattr(self, prop_name):
+                    layout.prop(self, prop_name)
+                    seen_props.add(prop_name)
+
+    def invoke(self, context, event):
+        """Initialize operator properties from presets when invoked"""
+        presets = context.scene.dicegen_presets
+
+        # Copy values from presets
+        self.dice_finish = presets.dice_finish
+        self.bumper_scale = presets.bumper_scale
+        self.size = presets.size
+        self.add_numbers = presets.add_numbers
+        self.number_scale = presets.number_scale
+        self.number_depth = presets.number_depth
+        self.font_path = presets.font_path
+        self.one_offset = presets.one_offset
+        self.number_indicator_type = presets.number_indicator_type
+        self.period_indicator_scale = presets.period_indicator_scale
+        self.period_indicator_space = presets.period_indicator_space
+        self.bar_indicator_height = presets.bar_indicator_height
+        self.bar_indicator_width = presets.bar_indicator_width
+        self.bar_indicator_space = presets.bar_indicator_space
+        self.center_bar = presets.center_bar
+        self.custom_image_path = presets.custom_image_path
+        self.custom_image_scale = presets.custom_image_scale
+        self.number_center_offset = presets.number_center_offset
+        self.base_height = presets.base_height
+        self.point_height = presets.point_height
+        self.top_point_height = presets.top_point_height
+        self.bottom_point_height = presets.bottom_point_height
+        self.height = presets.height
+        self.number_v_offset = presets.number_v_offset
+
+        # Set custom_image_face based on dice type (highest face)
+        dice_face_map = {
+            'D4': 4,
+            'D4_CRYSTAL': 4,
+            'D4_SHARD': 4,
+            'D6': 6,
+            'D8': 8,
+            'D10': 10,
+            'D12': 12,
+            'D20': 20,
+            'D100': 10,  # D100 uses same faces as D10
+        }
+        self.custom_image_face = dice_face_map.get(self.dice_type, presets.custom_image_face)
+
+        return self.execute(context)
+
+    def execute(self, context):
+        # Map dice type to mesh class and generator params
+        dice_map = {
+            'D4': (Tetrahedron, 'd4', {'number_center_offset': self.number_center_offset}),
+            'D4_CRYSTAL': (D4Crystal, 'd4Crystal', {'base_height': self.base_height, 'point_height': self.point_height}),
+            'D4_SHARD': (D4Shard, 'd4Shard', {'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset}),
+            'D6': (Cube, 'd6', {}),
+            'D8': (Octahedron, 'd8', {}),
+            'D10': (D10Mesh, 'd10', {'height': self.height, 'number_v_offset': self.number_v_offset}),
+            'D12': (Dodecahedron, 'd12', {}),
+            'D20': (Icosahedron, 'd20', {}),
+            'D100': (D100Mesh, 'd100', {'height': self.height, 'number_v_offset': self.number_v_offset}),
+        }
+
+        if self.dice_type not in dice_map:
+            self.report({'ERROR'}, f"Unknown dice type: {self.dice_type}")
+            return {'CANCELLED'}
+
+        mesh_class, name_prefix, extra_params = dice_map[self.dice_type]
+
+        # Create the mesh
+        mesh = mesh_class("dice_body", self.size, **extra_params)
+        dice_obj = mesh.create(context)
+
+        # Apply dice finish
+        configure_dice_finish_modifier(dice_obj, self.dice_finish, self.bumper_scale)
+        body_material = ensure_material("Dice Body", (0.95, 0.95, 0.9, 1))
+        assign_material(dice_obj, body_material)
+
+        # Collect settings for saving
+        settings_values = {}
+        for attr in SETTINGS_ATTRS:
+            if hasattr(self, attr):
+                settings_values[attr] = getattr(self, attr)
+
+        numbers_object = None
+        # Add numbers if enabled
+        if self.add_numbers:
+            number_indicator_type = NUMBER_IND_NONE
+            if self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100']:
+                number_indicator_type = self.number_indicator_type
+
+            if number_indicator_type == NUMBER_IND_NONE:
+                numbers_object = mesh.create_numbers(
+                    context,
+                    self.size,
+                    self.number_scale,
+                    self.number_depth,
+                    self.font_path if self.font_path else '',
+                    self.one_offset,
+                    custom_image_face=self.custom_image_face,
+                    custom_image_path=self.custom_image_path if self.custom_image_path else '',
+                    custom_image_scale=self.custom_image_scale
+                )
+            else:
+                numbers_object = mesh.create_numbers(
+                    context,
+                    self.size,
+                    self.number_scale,
+                    self.number_depth,
+                    self.font_path if self.font_path else '',
+                    self.one_offset,
+                    number_indicator_type,
+                    self.period_indicator_scale,
+                    self.period_indicator_space,
+                    self.bar_indicator_height,
+                    self.bar_indicator_width,
+                    self.bar_indicator_space,
+                    self.center_bar,
+                    custom_image_face=self.custom_image_face,
+                    custom_image_path=self.custom_image_path if self.custom_image_path else '',
+                    custom_image_scale=self.custom_image_scale
+                )
+
+        # Store metadata
+        target_object = numbers_object or dice_obj
+        target_object["dice_gen_type"] = mesh_class.__name__
+        if numbers_object is not None:
+            numbers_object["dice_body_name"] = dice_obj.name
+
+        # Store settings on the object
+        apply_settings(target_object.dice_gen_settings, settings_values)
+
+        return {'FINISHED'}
+
+
+class VIEW3D_PT_dice_gen_sidebar(bpy.types.Panel):
+    """DiceGen panel in 3D viewport sidebar (N panel)"""
+    bl_label = "DiceGen5"
+    bl_idname = "VIEW3D_PT_dice_gen_sidebar"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'DiceGen5'
+
+    def draw(self, context):
+        layout = self.layout
+        presets = context.scene.dicegen_presets
+
+        # Dice Finish Settings
+        box = layout.box()
+        box.label(text="Dice Finish", icon='MOD_SUBSURF')
+        box.prop(presets, "dice_finish")
+        if presets.dice_finish == "bumpers":
+            box.prop(presets, "bumper_scale")
+
+        # Size Settings
+        box = layout.box()
+        box.label(text="Size", icon='EMPTY_ARROWS')
+        box.prop(presets, "size")
+
+        # Number Settings
+        box = layout.box()
+        box.label(text="Numbers", icon='OUTLINER_OB_FONT')
+        box.prop(presets, "add_numbers")
+        if presets.add_numbers:
+            box.prop(presets, "number_scale")
+            box.prop(presets, "number_depth")
+            box.prop(presets, "font_path")
+            box.prop(presets, "one_offset")
+            box.prop(presets, "number_center_offset")
+
+            # Number indicators (for D10/D100)
+            box.label(text="Number Indicators (D10/D100):")
+            box.prop(presets, "number_indicator_type")
+            if presets.number_indicator_type == NUMBER_IND_PERIOD:
+                box.prop(presets, "period_indicator_scale")
+                box.prop(presets, "period_indicator_space")
+            elif presets.number_indicator_type == NUMBER_IND_BAR:
+                box.prop(presets, "bar_indicator_height")
+                box.prop(presets, "bar_indicator_width")
+                box.prop(presets, "bar_indicator_space")
+                box.prop(presets, "center_bar")
+
+        # Custom Image Settings
+        box = layout.box()
+        box.label(text="Custom Image", icon='IMAGE_DATA')
+        box.prop(presets, "custom_image_path")
+        if presets.custom_image_path:
+            box.prop(presets, "custom_image_scale")
+            box.label(text="(Image will appear on highest face)", icon='INFO')
+
+        # Dice Type Buttons
+        layout.separator()
+        box = layout.box()
+        box.label(text="Add Dice to Scene", icon='CUBE')
+
+        col = box.column(align=True)
+        op = col.operator("dicegen.add_from_preset", text="D4 Tetrahedron")
+        op.dice_type = 'D4'
+
+        op = col.operator("dicegen.add_from_preset", text="D4 Crystal")
+        op.dice_type = 'D4_CRYSTAL'
+
+        op = col.operator("dicegen.add_from_preset", text="D4 Shard")
+        op.dice_type = 'D4_SHARD'
+
+        op = col.operator("dicegen.add_from_preset", text="D6 Cube")
+        op.dice_type = 'D6'
+
+        op = col.operator("dicegen.add_from_preset", text="D8 Octahedron")
+        op.dice_type = 'D8'
+
+        op = col.operator("dicegen.add_from_preset", text="D10 Trapezohedron")
+        op.dice_type = 'D10'
+
+        op = col.operator("dicegen.add_from_preset", text="D12 Dodecahedron")
+        op.dice_type = 'D12'
+
+        op = col.operator("dicegen.add_from_preset", text="D20 Icosahedron")
+        op.dice_type = 'D20'
+
+        op = col.operator("dicegen.add_from_preset", text="D100 Trapezohedron")
+        op.dice_type = 'D100'
+
+
 classes = [
     DiceGenSettings,
+    DiceGenPresets,
     MeshDiceAdd,
     D4Generator,
     D4CrystalGenerator,
@@ -2608,7 +3150,9 @@ classes = [
     D12Generator,
     D20Generator,
     OBJECT_OT_dice_gen_update,
-    OBJECT_PT_dice_gen
+    OBJECT_PT_dice_gen,
+    DICE_OT_add_from_preset,
+    VIEW3D_PT_dice_gen_sidebar
 ]
 
 
@@ -2618,6 +3162,7 @@ def register():
         register_class(cls)
 
     bpy.types.Object.dice_gen_settings = PointerProperty(type=DiceGenSettings)
+    bpy.types.Scene.dicegen_presets = PointerProperty(type=DiceGenPresets)
 
     # Add "Dice" menu to the "Add Mesh" menu
     bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
@@ -2628,6 +3173,7 @@ def unregister():
     bpy.types.VIEW3D_MT_mesh_add.remove(menu_func)
 
     del bpy.types.Object.dice_gen_settings
+    del bpy.types.Scene.dicegen_presets
 
     from bpy.utils import unregister_class
     for cls in reversed(classes):
