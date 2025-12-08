@@ -2763,14 +2763,23 @@ class DiceGenPresets(bpy.types.PropertyGroup):
         soft_max=2,
         default=2 / 3
     )
-    number_v_offset: FloatProperty(
-        name='Number Vertical Offset',
-        description='Vertical offset of numbers (D4 Shard, D10, D100)',
+    number_v_offset_d4_shard: FloatProperty(
+        name='Number Vertical Offset (D4 Shard)',
+        description='Vertical offset of numbers for D4 Shard',
         min=0,
         soft_min=0,
         max=1,
         soft_max=1,
         default=0.75
+    )
+    number_v_offset: FloatProperty(
+        name='Number Vertical Offset (D10/D100)',
+        description='Vertical offset of numbers for D10 and D100',
+        min=0,
+        soft_min=0,
+        max=1,
+        soft_max=1,
+        default=0.33
     )
 
 
@@ -2884,14 +2893,23 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         soft_max=2,
         default=2 / 3
     )
-    number_v_offset: FloatProperty(
-        name='Number Vertical Offset',
-        description='Vertical offset of numbers (D4 Shard, D10, D100)',
+    number_v_offset_d4_shard: FloatProperty(
+        name='Number Vertical Offset (D4 Shard)',
+        description='Vertical offset of numbers for D4 Shard',
         min=0,
         soft_min=0,
         max=1,
         soft_max=1,
         default=0.75
+    )
+    number_v_offset: FloatProperty(
+        name='Number Vertical Offset (D10/D100)',
+        description='Vertical offset of numbers for D10 and D100',
+        min=0,
+        soft_min=0,
+        max=1,
+        soft_max=1,
+        default=0.33
     )
 
     def draw(self, context):
@@ -2966,7 +2984,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         dice_map = {
             'D4': (Tetrahedron, 'd4', {'number_center_offset': self.number_center_offset}),
             'D4_CRYSTAL': (D4Crystal, 'd4Crystal', {'base_height': self.base_height, 'point_height': self.point_height}),
-            'D4_SHARD': (D4Shard, 'd4Shard', {'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset}),
+            'D4_SHARD': (D4Shard, 'd4Shard', {'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset_d4_shard}),
             'D6': (Cube, 'd6', {}),
             'D8': (Octahedron, 'd8', {}),
             'D10': (D10Mesh, 'd10', {'height': self.height, 'number_v_offset': self.number_v_offset}),
