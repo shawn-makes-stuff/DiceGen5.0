@@ -8,7 +8,7 @@ A Blender add-on that generates polyhedral dice.
 
 Download the [python script](https://github.com/shawn-makes-stuff/DiceGen5.0/blob/main/DiceGen5.py), then go to `Edit > Preferences... > Add-ons > Install...` and select the python file.
 
-Afterwards you will be able to generate dice in `Add > Mesh > Dice`
+Afterwards you will be able to generate dice in `Add > Mesh > Dice` or `Sidebar > DiceGen5 > Add Dice to Scene`
 
 The add-on will create 2 objects, a blank dice mesh and the numbers. The blank dice object will have a boolean modifier that has the "Realtime" flag turned off for performance reasons. Turn that on to see the result in the viewport.
 
@@ -30,7 +30,8 @@ The add-on will create 2 objects, a blank dice mesh and the numbers. The blank d
 - Add a custom image to a face using an SVG
 - Set dice type to sharp, chamfer, or bevel (these are done with a bevel modifier)
 - Set dice type bumper (creates a "cage" around the dice corners, modifies dice mesh)
-- Added new Dice Gen section to Object properties to allow quick configuration changes
+- Added new Dice Gen section to Object properties to allow quick configuration changes of individual dice
+- Added new Dice Gen sidebar menu option to allow quickly creating multiple dice with the same configuration
 
 ## Tips
 
