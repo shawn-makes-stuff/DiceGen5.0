@@ -25,7 +25,7 @@ The add-on will create 2 objects, a blank dice mesh and the numbers. The blank d
 - D20 Icosahedron
 - Custom Crystal, any number of faces
 - Custom Shard, any number of faces
-
+- Custom Bipyramid, any even number of faces
 
 ### New features
 
