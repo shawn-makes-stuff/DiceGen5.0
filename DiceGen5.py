@@ -3701,8 +3701,11 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         # Add numbers if enabled
         if self.add_numbers:
             number_indicator_type = NUMBER_IND_NONE
-            supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
-                self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
+            supports_indicators = (
+                self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100']
+                or (self.dice_type == 'CUSTOM_TRAP' and self.num_faces >= 9)
+                or (self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
+            )
 
             if supports_indicators:
                 number_indicator_type = self.number_indicator_type
