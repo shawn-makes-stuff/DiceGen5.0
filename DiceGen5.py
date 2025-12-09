@@ -684,6 +684,224 @@ class D4Shard(CustomShard):
         super().__init__(name, size, 4, top_point_height, bottom_point_height, number_v_offset, number_h_offset)
 
 
+class CustomBipyramid(Mesh):
+    """
+    Custom bipyramid dice mesh generator.
+
+    Creates a bipyramid (double pyramid) die with a regular polygon base and pyramidal points
+    on both top and bottom. Numbers are placed on both the top and bottom pyramid faces.
+    num_faces represents the total number of faces on the die (must be even, e.g., 6, 8, 10, 12, etc.).
+    A die with 8 faces has a square base (4 sides), with 4 top faces + 4 bottom faces = 8 total.
+    """
+
+    def __init__(self, name, size, num_faces, top_point_height, bottom_point_height, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
+        """
+        Initialize a custom bipyramid mesh.
+
+        Args:
+            name: Name for the mesh object
+            size: Edge length of the base polygon
+            num_faces: Total number of faces on the die (must be even, as it equals 2*base_polygon_sides)
+            top_point_height: Height of the top pyramid point (relative to base radius)
+            bottom_point_height: Height of the bottom pyramid point (relative to base radius)
+            number_h_offset: Horizontal offset for numbers on faces
+            number_v_offset: Vertical offset for numbers on faces
+        """
+        super().__init__(name)
+        self.num_faces = num_faces  # Total number of faces
+        self.size = size
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
+        self.top_point_height = top_point_height
+        self.bottom_point_height = bottom_point_height
+
+        # Number of base polygon sides = num_faces / 2
+        self.num_sides = num_faces // 2
+
+        # Calculate radius for regular polygon
+        c0 = size / (2 * math.sin(math.pi / self.num_sides))
+        c1 = top_point_height * c0
+        c2 = bottom_point_height * c0
+
+        # Create vertices for a regular polygon base at z=0
+        angle_step = 2 * math.pi / self.num_sides
+        base_vertices = []
+
+        for i in range(self.num_sides):
+            angle = i * angle_step
+            x = c0 * math.cos(angle)
+            y = c0 * math.sin(angle)
+            base_vertices.append((x, y, 0))
+
+        # Apex vertices
+        top_apex = (0, 0, c1)
+        bottom_apex = (0, 0, -c2)
+
+        # Combine all vertices
+        self.vertices = base_vertices + [top_apex, bottom_apex]
+
+        # Create faces
+        faces = []
+        top_apex_idx = len(base_vertices)
+        bottom_apex_idx = len(base_vertices) + 1
+
+        # Top pyramid faces (wind counter-clockwise when viewed from outside)
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i, next_i, top_apex_idx])
+
+        # Bottom pyramid faces (wind clockwise to keep normals pointing outward)
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i, bottom_apex_idx, next_i])
+
+        self.faces = faces
+        self.base_font_scale = 0.8
+
+    def create(self, context):
+        """Create the mesh and recalculate normals"""
+        mesh_obj = super().create(context)
+        # Recalculate normals to ensure they point outward
+        bpy.ops.object.select_all(action='DESELECT')
+        mesh_obj.select_set(True)
+        bpy.context.view_layer.objects.active = mesh_obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return mesh_obj
+
+    def get_numbers(self):
+        return numbers(self.num_faces)  # num_faces now represents total face count
+
+    def get_number_locations(self):
+        # Calculate number positions on both top and bottom pyramid faces using rotation matrices
+        angle_step = 2 * math.pi / self.num_sides
+        c0 = self.size / (2 * math.sin(math.pi / self.num_sides))  # vertex radius
+        c_top = self.top_point_height * c0
+        c_bottom = self.bottom_point_height * c0
+
+        # Get rotations to derive local coordinate systems
+        rotations = self.get_number_rotations()
+
+        locations = []
+
+        # Scale factors for offsets
+        h_scale = self.number_h_offset * self.size * 0.5
+        v_scale = self.number_v_offset * self.size * 0.5
+
+        # Top pyramid faces
+        for i in range(self.num_sides):
+            # Get the two base vertices that form this face
+            angle1 = i * angle_step
+            angle2 = (i + 1) * angle_step
+
+            # Midpoint of the two base vertices (on the base edge at z=0)
+            edge_mid_x = (c0 * math.cos(angle1) + c0 * math.cos(angle2)) / 2
+            edge_mid_y = (c0 * math.sin(angle1) + c0 * math.sin(angle2)) / 2
+
+            # For top pyramid: lerp from edge midpoint toward top apex
+            # Default position is 1/3 up from base edge to apex (looks good visually)
+            lerp_factor = 0.33
+            base_pos = Vector((
+                edge_mid_x * (1 - lerp_factor),
+                edge_mid_y * (1 - lerp_factor),
+                c_top * lerp_factor
+            ))
+
+            # Use rotation matrix to get local coordinate system
+            rot = rotations[i]
+            euler = Euler(rot, 'XYZ')
+            rot_matrix = euler.to_matrix()
+            local_right = Vector((1, 0, 0))
+            local_up = Vector((0, 1, 0))
+            world_right = rot_matrix @ local_right
+            world_up = rot_matrix @ local_up
+
+            # Apply offsets in face-local coordinates
+            pos = base_pos + world_right * h_scale + world_up * v_scale
+            locations.append(tuple(pos))
+
+        # Bottom pyramid faces
+        for i in range(self.num_sides):
+            # Get the two base vertices that form this face
+            angle1 = i * angle_step
+            angle2 = (i + 1) * angle_step
+
+            # Midpoint of the two base vertices (on the base edge at z=0)
+            edge_mid_x = (c0 * math.cos(angle1) + c0 * math.cos(angle2)) / 2
+            edge_mid_y = (c0 * math.sin(angle1) + c0 * math.sin(angle2)) / 2
+
+            # For bottom pyramid: lerp from edge midpoint toward bottom apex
+            lerp_factor = 0.33
+            base_pos = Vector((
+                edge_mid_x * (1 - lerp_factor),
+                edge_mid_y * (1 - lerp_factor),
+                -c_bottom * lerp_factor
+            ))
+
+            # Use rotation matrix to get local coordinate system
+            rot = rotations[self.num_sides + i]
+            euler = Euler(rot, 'XYZ')
+            rot_matrix = euler.to_matrix()
+            local_right = Vector((1, 0, 0))
+            local_up = Vector((0, 1, 0))
+            world_right = rot_matrix @ local_right
+            world_up = rot_matrix @ local_up
+
+            # Apply offsets in face-local coordinates
+            pos = base_pos + world_right * h_scale + world_up * v_scale
+            locations.append(tuple(pos))
+
+        return locations
+
+    def get_number_rotations(self):
+        # Calculate rotations for both top and bottom pyramid faces based on face normals
+        angle_step = 2 * math.pi / self.num_sides
+        c0 = self.size / (2 * math.sin(math.pi / self.num_sides))
+        c_top = self.top_point_height * c0
+        c_bottom = self.bottom_point_height * c0
+
+        rotations = []
+
+        # Precompute base vertices
+        base_vertices = [Vector((c0 * math.cos(i * angle_step), c0 * math.sin(i * angle_step), 0)) for i in range(self.num_sides)]
+        top_apex = Vector((0, 0, c_top))
+        bottom_apex = Vector((0, 0, -c_bottom))
+
+        def orientation_from_face(v0: Vector, v1: Vector, v2: Vector, apex: Vector, base_a: Vector, base_b: Vector) -> Tuple[float, float, float]:
+            # Outward normal from face winding
+            normal = (v1 - v0).cross(v2 - v0).normalized()
+
+            # Up direction: project apex->edge_mid onto the face plane to keep numbers upright on the face
+            edge_mid = (base_a + base_b) / 2
+            up_hint = edge_mid - apex
+            up_proj = (up_hint - normal * up_hint.dot(normal)).normalized()
+
+            # Right-handed basis: X=right, Y=up, Z=normal
+            right = up_proj.cross(normal).normalized()
+            face_up = normal.cross(right).normalized()
+
+            rot_matrix = Matrix((right, face_up, normal)).transposed()
+            euler = rot_matrix.to_euler('XYZ')
+            return (euler.x, euler.y, euler.z)
+
+        # Top pyramid faces (winding: base_i, base_next, apex)
+        for i in range(self.num_sides):
+            v0 = base_vertices[i]
+            v1 = base_vertices[(i + 1) % self.num_sides]
+            rotations.append(orientation_from_face(v0, v1, top_apex, top_apex, v0, v1))
+
+        # Bottom pyramid faces (winding: base_i, apex, base_next) to keep normals outward
+        for i in range(self.num_sides):
+            v0 = base_vertices[i]
+            v1 = bottom_apex
+            v2 = base_vertices[(i + 1) % self.num_sides]
+            rotations.append(orientation_from_face(v0, v1, v2, bottom_apex, v0, v2))
+
+        return rotations
+
+
 class Cube(Mesh):
     """
     Cubic dice (D6) mesh generator.
@@ -2438,8 +2656,9 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         min=3,
         soft_min=3,
         max=100,
-        soft_max=20,
-        default=6
+        soft_max=40,
+        default=6,
+        step=2
     )
 
     base_height: FloatProperty(
@@ -2469,7 +2688,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         soft_min=0.25,
         max=2,
         soft_max=2,
-        default=0.75
+        default=7
     )
 
     bottom_point_height: FloatProperty(
@@ -2479,7 +2698,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         soft_min=0.25,
         max=2.5,
         soft_max=2.5,
-        default=1.75
+        default=7
     )
 
     height: FloatProperty(
@@ -2775,6 +2994,9 @@ class MeshDiceAdd(Menu):
         op = layout.operator('dicegen.add_from_preset', text='Custom Shard')
         op.dice_type = 'CUSTOM_SHARD'
 
+        op = layout.operator('dicegen.add_from_preset', text='Custom Bipyramid')
+        op.dice_type = 'CUSTOM_BIPYRAMID'
+
 
 # Define "Extras" menu
 def menu_func(self, context):
@@ -2834,8 +3056,9 @@ class DiceGenPresets(bpy.types.PropertyGroup):
         min=3,
         soft_min=3,
         max=100,
-        soft_max=20,
-        default=6
+        soft_max=40,
+        default=6,
+        step=2
     )
 
     # Geometry-specific properties
@@ -2954,6 +3177,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             ('D100', 'D100', 'Trapezohedron'),
             ('CUSTOM_CRYSTAL', 'Custom Crystal', 'Custom Crystal Dice'),
             ('CUSTOM_SHARD', 'Custom Shard', 'Custom Shard Dice'),
+            ('CUSTOM_BIPYRAMID', 'Custom Bipyramid', 'Custom Bipyramid Dice'),
         ]
     )
 
@@ -3006,8 +3230,9 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         min=3,
         soft_min=3,
         max=100,
-        soft_max=20,
-        default=6
+        soft_max=40,
+        default=6,
+        step=2
     )
     base_height: FloatProperty(
         name='Base Height',
@@ -3034,7 +3259,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         soft_min=0.25,
         max=100,
         soft_max=100,
-        default=7
+        default=3
     )
     bottom_point_height: FloatProperty(
         name='Bottom Point Height',
@@ -3043,7 +3268,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         soft_min=0.25,
         max=100,
         soft_max=100,
-        default=7
+        default=3
     )
     height: FloatProperty(
         name='Dice Height',
@@ -3104,10 +3329,19 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
                     'custom_image_path', 'custom_image_face', 'custom_image_scale'],
             'CUSTOM_CRYSTAL': ['size', 'num_faces', 'base_height', 'top_point_height', 'bottom_point_height', 'add_numbers',
                               'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                              'number_indicator_type', 'period_indicator_scale', 'period_indicator_space',
+                              'bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar',
                               'custom_image_path', 'custom_image_face', 'custom_image_scale'],
             'CUSTOM_SHARD': ['size', 'num_faces', 'top_point_height', 'bottom_point_height',
                             'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                            'number_indicator_type', 'period_indicator_scale', 'period_indicator_space',
+                            'bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar',
                             'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'CUSTOM_BIPYRAMID': ['size', 'num_faces', 'top_point_height', 'bottom_point_height',
+                                'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                                'number_indicator_type', 'period_indicator_scale', 'period_indicator_space',
+                                'bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar',
+                                'custom_image_path', 'custom_image_face', 'custom_image_scale'],
         }
 
         # Always show dice finish first
@@ -3123,13 +3357,19 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             if hasattr(self, prop_name):
                 # Special handling for number indicator properties
                 if prop_name == 'number_indicator_type':
-                    if self.add_numbers:
+                    supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                        self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
+                    if self.add_numbers and supports_indicators:
                         layout.prop(self, prop_name)
                 elif prop_name in ['period_indicator_scale', 'period_indicator_space']:
-                    if self.add_numbers and self.number_indicator_type == 'period':
+                    supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                        self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
+                    if self.add_numbers and supports_indicators and self.number_indicator_type == 'period':
                         layout.prop(self, prop_name)
                 elif prop_name in ['bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar']:
-                    if self.add_numbers and self.number_indicator_type == 'bar':
+                    supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                        self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
+                    if self.add_numbers and supports_indicators and self.number_indicator_type == 'bar':
                         layout.prop(self, prop_name)
                 else:
                     layout.prop(self, prop_name)
@@ -3179,6 +3419,11 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             # For shards, use relative multiplier defaults
             self.top_point_height = presets.top_point_height_shard
             self.bottom_point_height = presets.bottom_point_height_shard
+        elif self.dice_type == 'CUSTOM_BIPYRAMID':
+            # Dedicated defaults for bipyramid (8 faces, symmetric points)
+            self.num_faces = 8
+            self.top_point_height = 2
+            self.bottom_point_height = 2
 
         # Set custom_image_face based on dice type (highest face)
         dice_face_map = {
@@ -3193,6 +3438,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             'D100': 10,  # D100 uses same faces as D10
             'CUSTOM_CRYSTAL': self.num_faces,
             'CUSTOM_SHARD': self.num_faces,
+            'CUSTOM_BIPYRAMID': self.num_faces,  # num_faces now represents total face count
         }
         self.custom_image_face = dice_face_map.get(self.dice_type, presets.custom_image_face)
 
@@ -3206,6 +3452,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             'D4_SHARD': (D4Shard, 'd4Shard', {'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
             'CUSTOM_CRYSTAL': (CustomCrystal, 'customCrystal', {'num_faces': self.num_faces, 'base_height': self.base_height, 'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
             'CUSTOM_SHARD': (CustomShard, 'customShard', {'num_faces': self.num_faces, 'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
+            'CUSTOM_BIPYRAMID': (CustomBipyramid, 'customBipyramid', {'num_faces': self.num_faces, 'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
             'D6': (Cube, 'd6', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
             'D8': (Octahedron, 'd8', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
             'D10': (D10Mesh, 'd10', {'height': self.height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
@@ -3239,7 +3486,10 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         # Add numbers if enabled
         if self.add_numbers:
             number_indicator_type = NUMBER_IND_NONE
-            if self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100']:
+            supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
+
+            if supports_indicators:
                 number_indicator_type = self.number_indicator_type
 
             if number_indicator_type == NUMBER_IND_NONE:
@@ -3377,6 +3627,9 @@ class VIEW3D_PT_dice_gen_sidebar(bpy.types.Panel):
 
         op = col.operator("dicegen.add_from_preset", text="Custom Shard")
         op.dice_type = 'CUSTOM_SHARD'
+
+        op = col.operator("dicegen.add_from_preset", text="Custom Bipyramid")
+        op.dice_type = 'CUSTOM_BIPYRAMID'
 
 
 classes = [
