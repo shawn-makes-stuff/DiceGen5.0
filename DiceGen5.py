@@ -708,7 +708,8 @@ class CustomBipyramid(Mesh):
             number_v_offset: Vertical offset for numbers on faces
         """
         super().__init__(name)
-        self.num_faces = num_faces  # Total number of faces
+        # Enforce even face count with minimum 6
+        self.num_faces = max(6, num_faces if num_faces % 2 == 0 else num_faces + 1)  # Total number of faces
         self.size = size
         self.number_h_offset = number_h_offset
         self.number_v_offset = number_v_offset
@@ -716,7 +717,7 @@ class CustomBipyramid(Mesh):
         self.bottom_point_height = bottom_point_height
 
         # Number of base polygon sides = num_faces / 2
-        self.num_sides = num_faces // 2
+        self.num_sides = self.num_faces // 2
 
         # Calculate radius for regular polygon
         c0 = size / (2 * math.sin(math.pi / self.num_sides))
@@ -1515,6 +1516,180 @@ class D100Mesh(SquashedPentagonalTrapezohedron):
 
     def get_numbers(self):
         return [f'{str((i + 1) % 10)}0' for i in range(10)]
+
+
+class CustomTrapezohedron(Mesh):
+    """
+    Custom trapezohedron (d10-style) with independent top/bottom point heights.
+
+    Supports any even face count (minimum 6 faces). Top/bottom heights scale the positive/negative Z halves independently.
+    """
+
+    def __init__(self, name: str, size: float, num_faces: int, height: float, number_v_offset: float, number_h_offset: float = 0.0):
+        Mesh.__init__(self, name)
+        # Ensure an even face count of at least 6 (>= triangular trapezohedron)
+        self.num_faces = max(6, num_faces if num_faces % 2 == 0 else num_faces + 1)
+        self.num_sides = self.num_faces // 2
+        self.size = size
+        self.height = height
+        self.number_v_offset = number_v_offset
+        self.number_h_offset = number_h_offset
+        self.base_font_scale = 0.5
+
+        def build_antiprism(n: int):
+            step = 2 * math.pi / n
+            half = step / 2.0
+            r = 1.0 / (2.0 * math.sin(math.pi / n))
+            lateral_sq = 1.0 - 2 * r * r * (1 - math.cos(math.pi / n))
+            h = math.sqrt(max(lateral_sq, 1e-8))
+            z_top = h / 2.0
+            z_bot = -h / 2.0
+
+            verts = []
+            for i in range(n):
+                ang = i * step
+                verts.append((r * math.cos(ang), r * math.sin(ang), z_top))
+            for i in range(n):
+                ang = i * step + half
+                verts.append((r * math.cos(ang), r * math.sin(ang), z_bot))
+
+            faces = []
+            faces.append(list(range(n)))  # top
+            faces.append(list(range(2 * n - 1, n - 1, -1)))  # bottom
+            for i in range(n):
+                a = i
+                b = n + i
+                c = n + ((i - 1) % n)
+                faces.append([a, b, c])
+                d = (i + 1) % n
+                faces.append([a, d, b])
+            return verts, faces
+
+        def dual_mesh(verts, faces):
+            vectors = [Vector(v) for v in verts]
+            dual_verts = []
+            for f in faces:
+                v0, v1, v2 = (vectors[f[0]], vectors[f[1]], vectors[f[2]])
+                normal = (v1 - v0).cross(v2 - v0)
+                if normal.length == 0:
+                    dual_verts.append(Vector((0, 0, 0)))
+                    continue
+                plane_offset = normal.dot(v0)
+                dual_verts.append(normal / plane_offset)
+
+            dual_faces = []
+            for vi, v in enumerate(vectors):
+                adjacent = []
+                for fi, f in enumerate(faces):
+                    if vi in f:
+                        centroid = sum((vectors[idx] for idx in f), Vector((0, 0, 0))) / len(f)
+                        adjacent.append((fi, centroid))
+
+                axis = v.normalized()
+                ref = Vector((1, 0, 0)) if abs(axis.x) < 0.9 else Vector((0, 1, 0))
+                tangent = axis.cross(ref).normalized()
+                bitangent = axis.cross(tangent).normalized()
+
+                def angle_of(item):
+                    fi, cent = item
+                    vec = (dual_verts[fi] - v).normalized()
+                    x = vec.dot(tangent)
+                    y = vec.dot(bitangent)
+                    return math.atan2(y, x)
+
+                adjacent.sort(key=angle_of)
+                dual_faces.append([fi for fi, _ in adjacent])
+
+            return dual_verts, dual_faces
+
+        # Build dual of a uniform antiprism to get an accurate trapezohedron
+        anti_verts, anti_faces = build_antiprism(self.num_sides)
+        trap_verts, trap_faces = dual_mesh(anti_verts, anti_faces)
+
+        # Scale XY to requested size, Z independently to requested point heights
+        xs = [v.x for v in trap_verts]
+        ys = [v.y for v in trap_verts]
+        zs = [v.z for v in trap_verts]
+        current_radius = max(max(abs(min(xs)), abs(max(xs))), max(abs(min(ys)), abs(max(ys))), 1e-6)
+        current_top = max(zs)
+        current_bottom = min(zs)
+
+        target_radius = size * 0.5
+        target_top = target_radius * height
+        target_bottom = -target_radius * height
+
+        scale_xy = target_radius / current_radius
+        scale_z = (target_top - target_bottom) / (current_top - current_bottom)
+
+        def scale_vert(v: Vector):
+            return (v.x * scale_xy, v.y * scale_xy, (v.z - current_bottom) * scale_z + target_bottom)
+
+        self.vertices = [scale_vert(v) for v in trap_verts]
+        self.faces = trap_faces
+
+    def _face_frames(self):
+        """
+        Build local frames (center, right, up, normal) for each face with consistent orientation.
+        """
+        vectors = [Vector(v) for v in self.vertices]
+        frames = []
+
+        for face in self.faces:
+            verts = [vectors[idx] for idx in face]
+            normal = (verts[1] - verts[0]).cross(verts[2] - verts[0])
+            if normal.length == 0:
+                normal = Vector((0, 0, 1))
+            normal.normalize()
+
+            center = sum(verts, Vector((0, 0, 0))) / len(verts)
+            if normal.dot(center) < 0:
+                normal = -normal
+
+            # Up points toward the apex (top or bottom) projected onto the face
+            apex = max(verts, key=lambda v: abs(v.z))
+            up_dir = apex - center
+            up_dir = up_dir - normal * up_dir.dot(normal)
+            if up_dir.length < 1e-8:
+                up_dir = Vector((0, 1, 0))
+            up_dir.normalize()
+
+            right = up_dir.cross(normal)
+            if right.length < 1e-8:
+                right = Vector((1, 0, 0))
+            right.normalize()
+
+            frames.append({
+                'center': center,
+                'normal': normal,
+                'up': up_dir,
+                'right': right,
+            })
+
+        return frames
+
+    def get_numbers(self):
+        return numbers(self.num_faces)
+
+    def get_number_locations(self):
+        frames = self._face_frames()
+        h_scale = self.number_h_offset * self.size / 4.0
+        v_scale = self.number_v_offset * self.size / 4.0
+        locations = []
+
+        for frame in frames:
+            base_pos = frame['center']
+            pos = base_pos + frame['right'] * h_scale + frame['up'] * v_scale
+            locations.append((pos.x, pos.y, pos.z))
+
+        return locations
+
+    def get_number_rotations(self):
+        rotations = []
+        for frame in self._face_frames():
+            rot_matrix = Matrix((frame['right'], frame['up'], frame['normal'])).transposed()
+            euler = rot_matrix.to_euler('XYZ')
+            rotations.append((euler.x, euler.y, euler.z))
+        return rotations
 
 
 def numbers(n: int) -> List[str]:
@@ -2658,7 +2833,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         max=100,
         soft_max=40,
         default=6,
-        step=2
+        step=1
     )
 
     base_height: FloatProperty(
@@ -2704,10 +2879,10 @@ class DiceGenSettings(bpy.types.PropertyGroup):
     height: FloatProperty(
         name='Dice Height',
         description='Height of the die',
-        min=0.45,
-        soft_min=0.45,
-        max=2,
-        soft_max=2,
+        min=0.0,
+        soft_min=0.0,
+        max=100,
+        soft_max=100,
         default=2 / 3
     )
 
@@ -2988,6 +3163,9 @@ class MeshDiceAdd(Menu):
 
         layout.separator()
 
+        op = layout.operator('dicegen.add_from_preset', text='Custom Trapezohedron')
+        op.dice_type = 'CUSTOM_TRAP'
+
         op = layout.operator('dicegen.add_from_preset', text='Custom Crystal')
         op.dice_type = 'CUSTOM_CRYSTAL'
 
@@ -3058,7 +3236,7 @@ class DiceGenPresets(bpy.types.PropertyGroup):
         max=100,
         soft_max=40,
         default=6,
-        step=2
+        step=1
     )
 
     # Geometry-specific properties
@@ -3101,10 +3279,10 @@ class DiceGenPresets(bpy.types.PropertyGroup):
     height: FloatProperty(
         name='Dice Height',
         description='Height of the die (D10/D100)',
-        min=0.45,
-        soft_min=0.45,
-        max=2,
-        soft_max=2,
+        min=0.0,
+        soft_min=0.0,
+        max=100,
+        soft_max=100,
         default=2 / 3
     )
 
@@ -3178,6 +3356,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             ('CUSTOM_CRYSTAL', 'Custom Crystal', 'Custom Crystal Dice'),
             ('CUSTOM_SHARD', 'Custom Shard', 'Custom Shard Dice'),
             ('CUSTOM_BIPYRAMID', 'Custom Bipyramid', 'Custom Bipyramid Dice'),
+            ('CUSTOM_TRAP', 'Custom Trapezohedron', 'Custom D10-style Trapezohedron'),
         ]
     )
 
@@ -3273,10 +3452,10 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
     height: FloatProperty(
         name='Dice Height',
         description='Height of the die (D10/D100)',
-        min=0.45,
-        soft_min=0.45,
-        max=2,
-        soft_max=2,
+        min=0.0,
+        soft_min=0.0,
+        max=100,
+        soft_max=100,
         default=2 / 3
     )
     number_v_offset: FloatProperty(
@@ -3322,6 +3501,11 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
                    'font_path', 'custom_image_path', 'custom_image_face', 'custom_image_scale'],
             'D100': ['size', 'height', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset',
                     'font_path', 'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'CUSTOM_TRAP': ['size', 'num_faces', 'height', 'add_numbers', 'number_scale',
+                            'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                            'number_indicator_type', 'period_indicator_scale', 'period_indicator_space',
+                            'bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar',
+                            'custom_image_path', 'custom_image_face', 'custom_image_scale'],
             'D12': ['size', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
                     'custom_image_path', 'custom_image_face', 'custom_image_scale'],
             'D20': ['size', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
@@ -3352,22 +3536,32 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         # Get relevant properties for this dice type
         relevant_props = property_relevance.get(self.dice_type, [])
 
+        # Clamp face counts for dice types that require even counts and a minimum of 6
+        if self.dice_type in ['CUSTOM_TRAP', 'CUSTOM_BIPYRAMID']:
+            if self.num_faces < 6:
+                self.num_faces = 6
+            if self.num_faces % 2 != 0:
+                self.num_faces += 1
+
         # Draw properties in order
         for prop_name in relevant_props:
             if hasattr(self, prop_name):
                 # Special handling for number indicator properties
                 if prop_name == 'number_indicator_type':
                     supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                        self.dice_type == 'CUSTOM_TRAP' and self.num_faces >= 9) or (
                         self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
                     if self.add_numbers and supports_indicators:
                         layout.prop(self, prop_name)
                 elif prop_name in ['period_indicator_scale', 'period_indicator_space']:
                     supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                        self.dice_type == 'CUSTOM_TRAP' and self.num_faces >= 9) or (
                         self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
                     if self.add_numbers and supports_indicators and self.number_indicator_type == 'period':
                         layout.prop(self, prop_name)
                 elif prop_name in ['bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar']:
                     supports_indicators = self.dice_type in ['D6', 'D8', 'D10', 'D12', 'D20', 'D100'] or (
+                        self.dice_type == 'CUSTOM_TRAP' and self.num_faces >= 9) or (
                         self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD', 'CUSTOM_BIPYRAMID'] and self.num_faces >= 6)
                     if self.add_numbers and supports_indicators and self.number_indicator_type == 'bar':
                         layout.prop(self, prop_name)
@@ -3404,12 +3598,18 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         self.num_faces = presets.num_faces
         self.number_h_offset = presets.number_h_offset
 
+        # Default height for custom trapezohedron set to 1.0
+        if self.dice_type == 'CUSTOM_TRAP':
+            self.height = 1.0
+
         # Set number_v_offset based on dice type
-        # Shard-type dice use 0.75, D10/D100 use 0.33, all others use 0.0
+        # Shard-type dice use 0.75, D10/D100 use 0.33, custom trapezohedron uses 0.0, all others use 0.0
         if self.dice_type in ['D4_SHARD', 'CUSTOM_SHARD']:
             self.number_v_offset = presets.number_v_offset_d4_shard  # 0.75
         elif self.dice_type in ['D10', 'D100']:
             self.number_v_offset = presets.number_v_offset  # 0.33
+        elif self.dice_type == 'CUSTOM_TRAP':
+            self.number_v_offset = 0.0
         else:
             self.number_v_offset = 0.0  # D4, D6, D8, D12, D20, D4_CRYSTAL, CUSTOM_CRYSTAL
 
@@ -3424,6 +3624,9 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             self.num_faces = 8
             self.top_point_height = 2
             self.bottom_point_height = 2
+        elif self.dice_type == 'CUSTOM_TRAP':
+            # Defaults for custom trapezohedron
+            self.num_faces = 10
 
         # Set custom_image_face based on dice type (highest face)
         dice_face_map = {
@@ -3436,11 +3639,22 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             'D12': 12,
             'D20': 20,
             'D100': 10,  # D100 uses same faces as D10
+            'CUSTOM_TRAP': self.num_faces,
             'CUSTOM_CRYSTAL': self.num_faces,
             'CUSTOM_SHARD': self.num_faces,
             'CUSTOM_BIPYRAMID': self.num_faces,  # num_faces now represents total face count
         }
         self.custom_image_face = dice_face_map.get(self.dice_type, presets.custom_image_face)
+
+        # Enforce even face count and minimum 6 (total faces)
+        if self.dice_type in ['CUSTOM_TRAP', 'CUSTOM_BIPYRAMID']:
+            if self.num_faces < 6:
+                self.num_faces = 6
+            if self.num_faces % 2 != 0:
+                self.num_faces += 1
+        elif self.dice_type in ['CUSTOM_CRYSTAL', 'CUSTOM_SHARD']:
+            if self.num_faces < 3:
+                self.num_faces = 3
 
         return self.execute(context)
 
@@ -3459,6 +3673,7 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             'D12': (Dodecahedron, 'd12', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
             'D20': (Icosahedron, 'd20', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
             'D100': (D100Mesh, 'd100', {'height': self.height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
+            'CUSTOM_TRAP': (CustomTrapezohedron, 'customTrapezohedron', {'num_faces': self.num_faces, 'height': self.height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
         }
 
         if self.dice_type not in dice_map:
@@ -3630,6 +3845,9 @@ class VIEW3D_PT_dice_gen_sidebar(bpy.types.Panel):
 
         op = col.operator("dicegen.add_from_preset", text="Custom Bipyramid")
         op.dice_type = 'CUSTOM_BIPYRAMID'
+
+        op = col.operator("dicegen.add_from_preset", text="Custom Trapezohedron")
+        op.dice_type = 'CUSTOM_TRAP'
 
 
 classes = [
