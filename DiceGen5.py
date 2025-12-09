@@ -181,7 +181,7 @@ class Mesh:
         """
         return []
 
-    def create_numbers(self, context, size, number_scale, number_depth, font_path, one_offset,
+    def create_numbers(self, context, size, number_scale, number_depth, font_path,
                        number_indicator_type=NUMBER_IND_NONE, period_indicator_scale=1, period_indicator_space=1,
                        bar_indicator_height=1, bar_indicator_width=1, bar_indicator_space=1,
                        center_bar=True, custom_image_face=0, custom_image_path='', custom_image_scale=1):
@@ -194,7 +194,7 @@ class Mesh:
         numbers_object = create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth,
                                         number_indicator_type, period_indicator_scale, period_indicator_space,
                                         bar_indicator_height, bar_indicator_width, bar_indicator_space,
-                                        center_bar, one_offset, custom_image_face=custom_image_face,
+                                        center_bar, custom_image_face=custom_image_face,
                                         custom_image_path=custom_image_path, custom_image_scale=custom_image_scale)
 
         if numbers_object is not None:
@@ -213,7 +213,7 @@ class Tetrahedron(Mesh):
     The tetrahedron is oriented to stand on one face.
     """
 
-    def __init__(self, name: str, size: float, number_center_offset: float):
+    def __init__(self, name: str, size: float, number_center_offset: float, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         """
         Initialize a tetrahedron dice mesh.
 
@@ -221,10 +221,14 @@ class Tetrahedron(Mesh):
             name: Name for the mesh object
             size: Face-to-point size of the tetrahedron
             number_center_offset: How far numbers are offset from face centers (0=center, 1=vertex)
+            number_h_offset: Horizontal offset for numbers on faces
+            number_v_offset: Vertical offset for numbers on faces
         """
         super().__init__(name)
         self.size = size
         self.number_center_offset = number_center_offset
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
 
         c0 = CONSTANTS['tetrahedron']['c0'] / CONSTANTS['tetrahedron']['height'] * size
 
@@ -245,6 +249,7 @@ class Tetrahedron(Mesh):
         )) for f in self.faces]
         vertices = [Vector(v) for v in self.vertices]
 
+        # Calculate base positions using center offset
         location_vectors = [
             centers[0].lerp(vertices[2], self.number_center_offset),
             centers[2].lerp(vertices[2], self.number_center_offset),
@@ -259,6 +264,49 @@ class Tetrahedron(Mesh):
             centers[2].lerp(vertices[3], self.number_center_offset),
             centers[3].lerp(vertices[3], self.number_center_offset)
         ]
+
+        # Apply horizontal and vertical offsets
+        # For each face, we need to determine the local coordinate system
+        if self.number_h_offset != 0.0 or self.number_v_offset != 0.0:
+            c0 = CONSTANTS['tetrahedron']['c0'] / CONSTANTS['tetrahedron']['height'] * self.size
+            scale_factor = c0 * 0.5  # Scale for offset application
+
+            # Define face normal and up vectors for each of the 4 faces
+            # Face 0: [0,1,2], Face 1: [1,0,3], Face 2: [2,3,0], Face 3: [3,2,1]
+            face_info = [
+                (0, vertices[2]),  # Numbers 0,1,2 - face 0
+                (2, vertices[2]),  # Numbers 1,2 - face 2
+                (3, vertices[2]),  # Numbers 2 - face 3
+                (0, vertices[1]),  # Numbers 3,4,5 - face 0
+                (1, vertices[1]),  # Numbers 4,5 - face 1
+                (3, vertices[1]),  # Numbers 5 - face 3
+                (0, vertices[0]),  # Numbers 6,7,8 - face 0
+                (1, vertices[0]),  # Numbers 7,8 - face 1
+                (2, vertices[0]),  # Numbers 8 - face 2
+                (1, vertices[3]),  # Numbers 9,10,11 - face 1
+                (2, vertices[3]),  # Numbers 10,11 - face 2
+                (3, vertices[3]),  # Numbers 11 - face 3
+            ]
+
+            for i, (face_idx, target_vert) in enumerate(face_info):
+                # Calculate face normal
+                face = self.faces[face_idx]
+                v0 = vertices[face[0]]
+                v1 = vertices[face[1]]
+                v2 = vertices[face[2]]
+                edge1 = v1 - v0
+                edge2 = v2 - v0
+                normal = edge1.cross(edge2).normalized()
+
+                # Direction from center to target vertex (this is our "up" direction)
+                up_dir = (target_vert - centers[face_idx]).normalized()
+
+                # Right direction is perpendicular to both normal and up
+                right_dir = up_dir.cross(normal).normalized()
+
+                # Apply offsets
+                location_vectors[i] += right_dir * self.number_h_offset * scale_factor
+                location_vectors[i] += up_dir * self.number_v_offset * scale_factor
 
         return [(v.x, v.y, v.z) for v in location_vectors]
 
@@ -281,65 +329,359 @@ class Tetrahedron(Mesh):
 
 class D4Crystal(Mesh):
 
-    def __init__(self, name, size, base_height, point_height):
+    def __init__(self, name, size, base_height, top_point_height, bottom_point_height, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         super().__init__(name)
         self.size = size
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
 
         c0 = 0.5 * size
         c1 = 0.5 * base_height
-        c2 = 0.5 * base_height + point_height
+        c2 = 0.5 * base_height + top_point_height
+        c3 = -0.5 * base_height - bottom_point_height
 
         self.vertices = [(-c0, -c0, c1), (c0, -c0, c1), (c0, c0, c1), (-c0, c0, c1), (-c0, -c0, -c1), (c0, -c0, -c1),
-                         (c0, c0, -c1), (-c0, c0, -c1), (0, 0, c2), (0, 0, -c2)]
+                         (c0, c0, -c1), (-c0, c0, -c1), (0, 0, c2), (0, 0, c3)]
         self.faces = [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], [0, 1, 8], [1, 2, 8], [2, 3, 8],
                       [3, 0, 8], [4, 5, 9], [5, 6, 9], [6, 7, 9], [7, 4, 9]]
 
         self.base_font_scale = 0.8
+
+    def create(self, context):
+        """Create the mesh and recalculate normals"""
+        mesh_obj = super().create(context)
+        # Recalculate normals to ensure they point outward
+        bpy.ops.object.select_all(action='DESELECT')
+        mesh_obj.select_set(True)
+        bpy.context.view_layer.objects.active = mesh_obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return mesh_obj
 
     def get_numbers(self):
         return numbers(4)
 
     def get_number_locations(self):
         c0 = 0.5 * self.size
-        return [(c0, 0, 0), (0, c0, 0), (0, -c0, 0), (-c0, 0, 0)]
+        h = self.number_h_offset * c0
+        v = self.number_v_offset * c0
+        # Apply offsets in each face's local coordinate system (all faces are on XY plane, rotated)
+        return [(c0, h, v), (h, c0, v), (h, -c0, v), (-c0, h, v)]
 
     def get_number_rotations(self):
         return [(HALF_PI, 0, HALF_PI), (HALF_PI, 0, HALF_PI * 2), (HALF_PI, 0, 0), (HALF_PI, 0, HALF_PI * 3)]
 
 
-class D4Shard(Mesh):
+class CustomCrystal(Mesh):
+    """
+    Custom crystal dice mesh generator.
 
-    def __init__(self, name, size, top_point_height, bottom_point_height, number_v_offset):
+    Creates a crystal-shaped die with a square base and pyramidal points on top and bottom.
+    Supports any even number of faces (4, 6, 8, 10, 12, etc.) by placing numbers on the
+    square sides of the die.
+    """
+
+    def __init__(self, name, size, num_faces, base_height, top_point_height, bottom_point_height, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         super().__init__(name)
+        self.num_faces = num_faces
+        self.size = size
+        self.base_height = base_height
+        self.top_point_height = top_point_height
+        self.bottom_point_height = bottom_point_height
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
+
+        # Calculate the number of sides on the base polygon
+        # For a crystal, we have top pyramid + bottom pyramid + sides
+        # If we want N total faces and the sides are where numbers go,
+        # we need N sides (each side is where a number goes)
+        self.num_sides = num_faces
+
+        c0 = 0.5 * size
+        c1 = 0.5 * base_height
+        c2 = 0.5 * base_height + top_point_height
+        c3 = -0.5 * base_height - bottom_point_height
+
+        # Create vertices for a regular polygon base
+        angle_step = 2 * math.pi / self.num_sides
+        base_top_vertices = []
+        base_bottom_vertices = []
+
+        for i in range(self.num_sides):
+            angle = i * angle_step
+            x = c0 * math.cos(angle)
+            y = c0 * math.sin(angle)
+            base_top_vertices.append((x, y, c1))
+            base_bottom_vertices.append((x, y, -c1))
+
+        # Apex vertices
+        top_apex = (0, 0, c2)
+        bottom_apex = (0, 0, c3)
+
+        # Combine all vertices
+        self.vertices = base_top_vertices + base_bottom_vertices + [top_apex, bottom_apex]
+
+        # Create faces
+        faces = []
+
+        # Side faces (quads connecting top and bottom base)
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i, next_i, next_i + self.num_sides, i + self.num_sides])
+
+        # Top pyramid faces
+        top_apex_idx = len(self.vertices) - 2
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i, next_i, top_apex_idx])
+
+        # Bottom pyramid faces
+        bottom_apex_idx = len(self.vertices) - 1
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i + self.num_sides, bottom_apex_idx, next_i + self.num_sides])
+
+        self.faces = faces
+        self.base_font_scale = 0.8
+
+    def create(self, context):
+        """Create the mesh and recalculate normals"""
+        mesh_obj = super().create(context)
+        # Recalculate normals to ensure they point outward
+        bpy.ops.object.select_all(action='DESELECT')
+        mesh_obj.select_set(True)
+        bpy.context.view_layer.objects.active = mesh_obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return mesh_obj
+
+    def get_numbers(self):
+        return numbers(self.num_faces)
+
+    def get_number_locations(self):
+        # Place numbers on the center of each side face
+        # For a regular polygon with vertices at radius c0, the distance to the middle
+        # of an edge (apothem) is c0 * cos(π / num_sides)
+        c0 = 0.5 * self.size
+        angle_step = 2 * math.pi / self.num_sides
+        # Calculate apothem - distance from center to middle of edge
+        apothem = c0 * math.cos(math.pi / self.num_sides)
+        h = self.number_h_offset * apothem
+        v = self.number_v_offset * apothem
+        locations = []
+
+        for i in range(self.num_sides):
+            angle = (i + 0.5) * angle_step  # Center of the side
+            # Position numbers at the face surface
+            # h moves tangent to the circle (perpendicular to radial direction)
+            # v moves vertically in Z
+            x = apothem * math.cos(angle) + h * (-math.sin(angle))
+            y = apothem * math.sin(angle) + h * math.cos(angle)
+            locations.append((x, y, v))
+
+        return locations
+
+    def get_number_rotations(self):
+        # Rotate numbers to face outward from each side
+        angle_step = 2 * math.pi / self.num_sides
+        rotations = []
+
+        for i in range(self.num_sides):
+            angle = (i + 0.5) * angle_step
+            rotations.append((HALF_PI, 0, angle + HALF_PI))
+
+        return rotations
+
+
+class CustomShard(Mesh):
+    """
+    Custom shard dice mesh generator.
+
+    Creates a shard-shaped die with a regular polygon base and pyramidal points
+    on top and bottom. Numbers are placed on the bottom pyramid faces.
+    Supports various face counts (4, 6, 8, 10, 12, etc.).
+    """
+
+    def __init__(self, name, size, num_faces, top_point_height, bottom_point_height, number_v_offset, number_h_offset: float = 0.0):
+        super().__init__(name)
+        self.num_faces = num_faces
         self.size = size
         self.number_v_offset = number_v_offset
+        self.number_h_offset = number_h_offset
         self.bottom_point_height = bottom_point_height
+        self.top_point_height = top_point_height
 
-        c0 = size / sqrt(2)
+        # For a shard, numbers go on the bottom pyramid faces
+        self.num_sides = num_faces
+
+        # Calculate radius for regular polygon
+        c0 = size / (2 * math.sin(math.pi / self.num_sides))
         c1 = top_point_height * c0
         c2 = bottom_point_height * c0
 
-        self.vertices = [(c0, 0, 0), (0, c0, 0), (0, -c0, 0), (-c0, 0, 0), (0, 0, c1), (0, 0, -c2)]
-        # top pyramid faces wind counter-clockwise when viewed from the outside,
-        # bottom pyramid faces wind clockwise to keep normals pointing outward
-        self.faces = [[0, 1, 4], [1, 3, 4], [3, 2, 4], [2, 0, 4], [0, 5, 1], [1, 5, 3], [3, 5, 2], [2, 5, 0]]
+        # Create vertices for a regular polygon base at z=0
+        angle_step = 2 * math.pi / self.num_sides
+        base_vertices = []
 
+        for i in range(self.num_sides):
+            angle = i * angle_step
+            x = c0 * math.cos(angle)
+            y = c0 * math.sin(angle)
+            base_vertices.append((x, y, 0))
+
+        # Apex vertices
+        top_apex = (0, 0, c1)
+        bottom_apex = (0, 0, -c2)
+
+        # Combine all vertices
+        self.vertices = base_vertices + [top_apex, bottom_apex]
+
+        # Create faces
+        faces = []
+        top_apex_idx = len(base_vertices)
+        bottom_apex_idx = len(base_vertices) + 1
+
+        # Top pyramid faces (wind counter-clockwise when viewed from outside)
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i, next_i, top_apex_idx])
+
+        # Bottom pyramid faces (wind clockwise to keep normals pointing outward)
+        for i in range(self.num_sides):
+            next_i = (i + 1) % self.num_sides
+            faces.append([i, bottom_apex_idx, next_i])
+
+        self.faces = faces
         self.base_font_scale = 0.8
 
+    def create(self, context):
+        """Create the mesh and recalculate normals"""
+        mesh_obj = super().create(context)
+        # Recalculate normals to ensure they point outward
+        bpy.ops.object.select_all(action='DESELECT')
+        mesh_obj.select_set(True)
+        bpy.context.view_layer.objects.active = mesh_obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return mesh_obj
+
     def get_numbers(self):
-        return numbers(4)
+        return numbers(self.num_faces)
 
     def get_number_locations(self):
-        c0 = self.size / 2 / sqrt(2) * self.number_v_offset
-        c1 = self.size / sqrt(2) * self.bottom_point_height * (1 - self.number_v_offset)
-        return [(c0, c0, -c1), (-c0, c0, -c1), (c0, -c0, -c1), (-c0, -c0, -c1)]
+        # Calculate number positions on bottom pyramid faces
+        # Each face is a triangle: vertex i, vertex i+1, bottom apex
+        # We interpolate along the face from the edge midpoint toward the apex
+
+        angle_step = 2 * math.pi / self.num_sides
+        c0 = self.size / (2 * math.sin(math.pi / self.num_sides))  # vertex radius
+        c_bottom = self.bottom_point_height * c0  # bottom apex depth
+        h = self.number_h_offset * c0
+
+        locations = []
+        for i in range(self.num_sides):
+            # Get the two base vertices that form this face
+            angle1 = i * angle_step
+            angle2 = (i + 1) * angle_step
+
+            # Midpoint of the two base vertices (on the base edge at z=0)
+            edge_mid_x = (c0 * math.cos(angle1) + c0 * math.cos(angle2)) / 2
+            edge_mid_y = (c0 * math.sin(angle1) + c0 * math.sin(angle2)) / 2
+
+            # Interpolate from edge midpoint (at z=0) to bottom apex (at 0,0,-c_bottom)
+            # At offset=1: at edge midpoint, at offset=0: at apex
+            # h moves tangent to the face (perpendicular to radial direction)
+            face_angle = (angle1 + angle2) / 2
+            x = edge_mid_x * self.number_v_offset + h * (-math.sin(face_angle))
+            y = edge_mid_y * self.number_v_offset + h * math.cos(face_angle)
+            z = -c_bottom * (1 - self.number_v_offset)
+
+            locations.append((x, y, z))
+
+        return locations
 
     def get_number_rotations(self):
-        c0 = self.size / 2 / sqrt(2)
-        c1 = self.size / sqrt(2) * self.bottom_point_height
-        angle = math.pi / 2 + Vector((0, 0, c1)).angle(Vector((c0, c0, c1)))
-        return [(angle, 0, math.pi * 3 / 4), (angle, 0, math.pi * 5 / 4), (angle, 0, math.pi * 1 / 4),
-                (angle, 0, math.pi * 7 / 4)]
+        # Calculate rotation by using the actual face normal vectors
+        # Each bottom face is: vertex i, bottom_apex, vertex i+1
+
+        angle_step = 2 * math.pi / self.num_sides
+        c0 = self.size / (2 * math.sin(math.pi / self.num_sides))  # vertex radius
+        c_bottom = self.bottom_point_height * c0
+
+        rotations = []
+        for i in range(self.num_sides):
+            # Get the three vertices of this bottom pyramid face
+            angle1 = i * angle_step
+            angle2 = (i + 1) * angle_step
+            center_angle = (i + 0.5) * angle_step
+
+            # Vertex positions
+            v1 = Vector((c0 * math.cos(angle1), c0 * math.sin(angle1), 0))
+            v2 = Vector((0, 0, -c_bottom))  # bottom apex
+            v3 = Vector((c0 * math.cos(angle2), c0 * math.sin(angle2), 0))
+
+            # Calculate tilt angle using the same method as D4Shard
+            # This measures the angle between a vertical vector and the vector to the edge midpoint
+            edge_center_x = (c0 * math.cos(angle1) + c0 * math.cos(angle2)) / 2
+            edge_center_y = (c0 * math.sin(angle1) + c0 * math.sin(angle2)) / 2
+
+            # Vector from origin to vertical (above origin)
+            vertical_vec = Vector((0, 0, c_bottom))
+            # Vector from origin to edge center
+            edge_vec = Vector((edge_center_x, edge_center_y, c_bottom))
+
+            # Calculate angle between these vectors and add 90 degrees
+            tilt_angle = math.pi / 2 + vertical_vec.angle(edge_vec)
+
+            # Calculate the "up" vector on the face
+            # The "up" direction should point from the bottom apex toward the top edge
+            edge_midpoint = (v1 + v3) / 2  # midpoint of base edge
+            up_on_face = edge_midpoint - v2  # vector from apex to edge midpoint
+            up_on_face = up_on_face.normalized()
+
+            # We need to find what angle to rotate the number around the face normal
+            # After tilting, we want the number's local Y axis to point "up" along the face
+            # The "up" direction on a tilted pyramid face points from apex toward the edge
+
+            # Now calculate the angle we need to rotate around Y axis (roll)
+            # This aligns the number's orientation with the face's orientation
+            # The angle is measured from the radial direction
+            radial_2d = Vector((math.cos(center_angle), math.sin(center_angle), 0))
+
+            # Project up_on_face onto the XY plane to get its horizontal component
+            up_horizontal = Vector((up_on_face.x, up_on_face.y, 0)).normalized()
+
+            # Calculate angle between radial direction and up_horizontal
+            # This is the roll we need to apply
+            cos_roll = radial_2d.dot(up_horizontal)
+            sin_roll = radial_2d.x * up_horizontal.y - radial_2d.y * up_horizontal.x
+            y_rotation = math.atan2(sin_roll, cos_roll)
+
+            # Add -90 degrees rotation around the Z axis to align the number with the face
+            # Plus 180 degrees to flip the number so it reads correctly (not backwards)
+            z_rotation = center_angle - math.pi / 2 + math.pi
+
+            rotations.append((tilt_angle, y_rotation, z_rotation))
+
+        return rotations
+
+
+class D4Shard(CustomShard):
+    """
+    D4 Shard dice - a thin wrapper around CustomShard with 4 faces.
+
+    This reuses the CustomShard logic which already handles positioning and rotation correctly.
+    """
+
+    def __init__(self, name, size, top_point_height, bottom_point_height, number_v_offset, number_h_offset: float = 0.0):
+        # Simply call CustomShard with num_faces=4
+        super().__init__(name, size, 4, top_point_height, bottom_point_height, number_v_offset, number_h_offset)
 
 
 class Cube(Mesh):
@@ -350,18 +692,22 @@ class Cube(Mesh):
     Opposite faces sum to 7 following standard dice conventions.
     """
 
-    def __init__(self, name: str, size: float):
+    def __init__(self, name: str, size: float, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         """
         Initialize a cube dice mesh.
 
         Args:
             name: Name for the mesh object
             size: Face-to-face size of the cube
+            number_h_offset: Horizontal offset for numbers on faces
+            number_v_offset: Vertical offset for numbers on faces
         """
         super().__init__(name)
 
         # Calculate the necessary constants
         self.v_coord_const = 0.5 * size
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
         s = self.v_coord_const
 
         # create the vertices and faces
@@ -374,7 +720,17 @@ class Cube(Mesh):
 
     def get_number_locations(self):
         s = self.v_coord_const
-        return [(0, -s, 0), (-s, 0, 0), (0, 0, s), (0, 0, -s), (s, 0, 0), (0, s, 0)]
+        h = self.number_h_offset * s
+        v = self.number_v_offset * s
+        # Each tuple represents (x, y, z) position of number on each face
+        # Offsets are applied in the face's local coordinate system:
+        # Face 1 (front, -Y): h along X, v along Z
+        # Face 2 (left, -X): h along Z, v along Y
+        # Face 3 (top, +Z): h along X, v along Y
+        # Face 4 (bottom, -Z): h along X, v along Y
+        # Face 5 (right, +X): h along Z, v along Y
+        # Face 6 (back, +Y): h along X, v along Z
+        return [(h, -s, v), (-s, -h, v), (h, v, s), (h, v, -s), (s, h, v), (h, s, v)]
 
     def get_number_rotations(self):
         return [
@@ -389,12 +745,14 @@ class Cube(Mesh):
 
 class Octahedron(Mesh):
 
-    def __init__(self, name, size):
+    def __init__(self, name, size, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         super().__init__(name)
 
         # calculate circumscribed sphere radius from inscribed sphere radius
         # diameter of the inscribed sphere is the face 2 face length of the octahedron
         self.circumscribed_r = (size * math.sqrt(3)) / 2
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
         s = self.circumscribed_r
 
         # create the vertices and faces
@@ -408,37 +766,97 @@ class Octahedron(Mesh):
 
     def get_number_locations(self):
         c = self.circumscribed_r / 3
-        return [
-            (c, c, c),
-            (c, c, -c),
-            (c, -c, -c),
-            (c, -c, c),
-            (-c, c, -c),
-            (-c, c, c),
-            (-c, -c, c),
-            (-c, -c, -c),
+
+        # Base positions at face centers
+        base_positions = [
+            Vector((c, c, c)),      # Face 0
+            Vector((-c, c, c)),     # Face 1
+            Vector((-c, -c, c)),    # Face 2
+            Vector((c, -c, c)),     # Face 3
+            Vector((-c, c, -c)),    # Face 4
+            Vector((c, c, -c)),     # Face 5
+            Vector((c, -c, -c)),    # Face 6
+            Vector((-c, -c, -c)),   # Face 7
         ]
 
+        # Get the rotations to understand number orientation
+        rotations = self.get_number_rotations()
+
+        locations = []
+        h_scale = self.number_h_offset * c
+        v_scale = self.number_v_offset * c
+
+        for i, rot in enumerate(rotations):
+            # Create rotation matrix from Euler angles
+            euler = Euler(rot, 'XYZ')
+            rot_matrix = euler.to_matrix()
+
+            # In the number's local space, X is right, Y is up (before rotation)
+            # Apply rotation to get world-space directions
+            local_right = Vector((1, 0, 0))
+            local_up = Vector((0, 1, 0))
+
+            world_right = rot_matrix @ local_right
+            world_up = rot_matrix @ local_up
+
+            # Start with base position and apply offsets
+            pos = base_positions[i].copy()
+            pos += world_right * h_scale + world_up * v_scale
+            locations.append((pos.x, pos.y, pos.z))
+
+        return locations
+
     def get_number_rotations(self):
-        # dihedral angle / 2
+        # dihedral angle / 2 - for tilting numbers to match face angle
         da = math.acos(-1 / 3)
-        return [
-            (da / 2, 0, math.pi * 3 / 4),
-            (-math.pi + da / 2, 0, -math.pi / 4),
-            (-math.pi + da / 2, 0, -math.pi * 3 / 4),
-            (da / 2, 0, math.pi * 1 / 4),
-            (-math.pi + da / 2, 0, math.pi * 1 / 4),
-            (da / 2, 0, -math.pi * 3 / 4),
-            (da / 2, 0, -math.pi * 1 / 4),
-            (-math.pi + da / 2, 0, math.pi * 3 / 4),
-        ]
+        # Octahedron faces are organized as top pyramid (faces 0-3) and bottom pyramid (faces 4-7)
+        # Each face is a triangle with a specific orientation that determines the z-rotation
+        angles = [Euler((0, 0, 0), 'XYZ') for _ in range(8)]
+
+        # Top pyramid faces - pointing upward (apex at vertex 4: (0,0,s))
+        # Face 0: [4,0,2] - edge from +X to +Y
+        angles[0].x = da / 2
+        angles[0].z = math.pi * 3 / 4
+
+        # Face 1: [4,2,1] - edge from +Y to -X
+        angles[1].x = da / 2
+        angles[1].z = math.pi * 5 / 4
+
+        # Face 2: [4,1,3] - edge from -X to -Y
+        angles[2].x = da / 2
+        angles[2].z = math.pi * 7 / 4
+
+        # Face 3: [4,3,0] - edge from -Y to +X
+        angles[3].x = da / 2
+        angles[3].z = math.pi * 1 / 4
+
+        # Bottom pyramid faces - pointing downward (apex at vertex 5: (0,0,-s))
+        # Face 4: [5,2,0] - number 5 (adjusting)
+        angles[4].x = -math.pi + da / 2
+        angles[4].z = math.pi * 1 / 4
+
+        # Face 5: [5,1,2] - number 6 (CORRECT - don't change)
+        angles[5].x = -math.pi + da / 2
+        angles[5].z = math.pi * 7 / 4
+
+        # Face 6: [5,3,1] - number 7 (CORRECT - don't change)
+        angles[6].x = -math.pi + da / 2
+        angles[6].z = math.pi * 5 / 4
+
+        # Face 7: [5,0,3] - number 8 (adjusting)
+        angles[7].x = -math.pi + da / 2
+        angles[7].z = math.pi * 3 / 4
+
+        return [(a.x, a.y, a.z) for a in angles]
 
 
 class Dodecahedron(Mesh):
 
-    def __init__(self, name, size):
+    def __init__(self, name, size, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         super().__init__(name)
         self.size = size
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
 
         # Calculate the necessary constants https://dmccooey.com/polyhedra/Dodecahedron.html
         edge_length = size / 2 / CONSTANTS['octahedron']['inscribed_r']
@@ -462,23 +880,51 @@ class Dodecahedron(Mesh):
         return numbers(12)
 
     def get_number_locations(self):
+        # Numbers placed at dual polyhedron (icosahedron) vertices
         dual_e = self.size / 2 / CONSTANTS['icosahedron']['circumscribed_r']
         c0 = dual_e * CONSTANTS['icosahedron']['c0']
         c1 = dual_e * CONSTANTS['icosahedron']['c1']
-        return [
-            (c1, 0.0, c0),
-            (0.0, c0, c1),
-            (-c1, 0.0, c0),
-            (0.0, -c0, c1),
-            (c0, -c1, 0.0),
-            (c0, c1, 0.0),
-            (-c0, -c1, 0.0),
-            (-c0, c1, 0.0),
-            (0.0, c0, -c1),
-            (c1, 0.0, -c0),
-            (0.0, -c0, -c1),
-            (-c1, 0.0, -c0),
+
+        # Base positions at icosahedron vertices (dual of dodecahedron)
+        base_positions = [
+            Vector((c1, 0, c0)),
+            Vector((0, c0, c1)),
+            Vector((-c1, 0, c0)),
+            Vector((0, -c0, c1)),
+            Vector((c0, -c1, 0)),
+            Vector((c0, c1, 0)),
+            Vector((-c0, -c1, 0)),
+            Vector((-c0, c1, 0)),
+            Vector((0, c0, -c1)),
+            Vector((c1, 0, -c0)),
+            Vector((0, -c0, -c1)),
+            Vector((-c1, 0, -c0)),
         ]
+
+        # Get the rotations to understand number orientation
+        rotations = self.get_number_rotations()
+
+        locations = []
+        h_scale = self.number_h_offset * c0
+        v_scale = self.number_v_offset * c0
+
+        for base_pos, rot in zip(base_positions, rotations):
+            # Create rotation matrix from Euler angles
+            euler = Euler(rot, 'XYZ')
+            rot_matrix = euler.to_matrix()
+
+            # In the number's local space, X is right, Y is up (before rotation)
+            local_right = Vector((1, 0, 0))
+            local_up = Vector((0, 1, 0))
+
+            world_right = rot_matrix @ local_right
+            world_up = rot_matrix @ local_up
+
+            # Apply offsets in the number's coordinate system
+            pos = base_pos.copy() + world_right * h_scale + world_up * v_scale
+            locations.append((pos.x, pos.y, pos.z))
+
+        return locations
 
     def get_number_rotations(self):
         angles = [Euler((0, 0, 0), 'XYZ') for _ in range(12)]
@@ -531,9 +977,11 @@ class Dodecahedron(Mesh):
 
 class Icosahedron(Mesh):
 
-    def __init__(self, name, size):
+    def __init__(self, name, size, number_h_offset: float = 0.0, number_v_offset: float = 0.0):
         super().__init__(name)
         self.size = size
+        self.number_h_offset = number_h_offset
+        self.number_v_offset = number_v_offset
 
         # Calculate the necessary constants https://dmccooey.com/polyhedra/Icosahedron.html
         edge_length = size / 2 / CONSTANTS['icosahedron']['inscribed_r']
@@ -554,34 +1002,61 @@ class Icosahedron(Mesh):
         return numbers(20)
 
     def get_number_locations(self):
+        # Numbers are placed at the dual polyhedron (dodecahedron) vertices
         dual_e = self.size / 2 / CONSTANTS['octahedron']['circumscribed_r']
 
         c0 = CONSTANTS['octahedron']['c0'] * dual_e
         c1 = CONSTANTS['octahedron']['c1'] * dual_e
         s = CONSTANTS['octahedron']['c2'] * dual_e
 
-        return [
-            (0.0, s, c1),
-            (-c0, -c0, -c0),
-            (s, c1, 0.0),
-            (s, -c1, 0.0),
-            (-c0, -c0, c0),
-            (c1, 0.0, -s),
-            (-c0, c0, c0),
-            (0.0, s, -c1),
-            (c1, 0.0, s),
-            (-c0, c0, -c0),
-            (c0, -c0, c0),
-            (-c1, 0.0, -s),
-            (0.0, -s, c1),
-            (c0, -c0, -c0),
-            (-c1, 0.0, s),
-            (c0, c0, -c0),
-            (-s, c1, 0.0),
-            (-s, -c1, 0.0),
-            (c0, c0, c0),
-            (0.0, -s, -c1)
+        # Base positions at dodecahedron vertices
+        base_positions = [
+            Vector((0, s, c1)),      # Face 0
+            Vector((-c0, -c0, -c0)), # Face 1
+            Vector((s, c1, 0)),      # Face 2
+            Vector((s, -c1, 0)),     # Face 3
+            Vector((-c0, -c0, c0)),  # Face 4
+            Vector((c1, 0, -s)),     # Face 5
+            Vector((-c0, c0, c0)),   # Face 6
+            Vector((0, s, -c1)),     # Face 7
+            Vector((c1, 0, s)),      # Face 8
+            Vector((-c0, c0, -c0)),  # Face 9
+            Vector((c0, -c0, c0)),   # Face 10
+            Vector((-c1, 0, -s)),    # Face 11
+            Vector((0, -s, c1)),     # Face 12
+            Vector((c0, -c0, -c0)),  # Face 13
+            Vector((-c1, 0, s)),     # Face 14
+            Vector((c0, c0, -c0)),   # Face 15
+            Vector((-s, c1, 0)),     # Face 16
+            Vector((-s, -c1, 0)),    # Face 17
+            Vector((c0, c0, c0)),    # Face 18
+            Vector((0, -s, -c1))     # Face 19
         ]
+
+        # Get the rotations to understand number orientation
+        rotations = self.get_number_rotations()
+
+        locations = []
+        h_scale = self.number_h_offset * self.size / 6
+        v_scale = self.number_v_offset * self.size / 6
+
+        for base_pos, rot in zip(base_positions, rotations):
+            # Create rotation matrix from Euler angles
+            euler = Euler(rot, 'XYZ')
+            rot_matrix = euler.to_matrix()
+
+            # In the number's local space, X is right, Y is up (before rotation)
+            local_right = Vector((1, 0, 0))
+            local_up = Vector((0, 1, 0))
+
+            world_right = rot_matrix @ local_right
+            world_up = rot_matrix @ local_up
+
+            # Apply offsets in the number's coordinate system
+            pos = base_pos.copy() + world_right * h_scale + world_up * v_scale
+            locations.append((pos.x, pos.y, pos.z))
+
+        return locations
 
     def get_number_rotations(self):
         """
@@ -688,7 +1163,7 @@ class SquashedPentagonalTrapezohedron(Mesh):
     The shape can be "squashed" along the vertical axis by adjusting the height parameter.
     """
 
-    def __init__(self, name: str, size: float, height: float, number_v_offset: float):
+    def __init__(self, name: str, size: float, height: float, number_v_offset: float, number_h_offset: float = 0.0):
         """
         Initialize a pentagonal trapezohedron mesh.
 
@@ -697,11 +1172,13 @@ class SquashedPentagonalTrapezohedron(Mesh):
             size: Face-to-face size of the die
             height: Height scaling factor (1.0 = regular, <1.0 = squashed, >1.0 = elongated)
             number_v_offset: Vertical offset for number placement (0=bottom, 1=top of face)
+            number_h_offset: Horizontal offset for number placement
         """
         super().__init__(name)
         self.size = size
         self.height = height
         self.number_v_offset = number_v_offset
+        self.number_h_offset = number_h_offset
 
         antiprism_e = size / 2 / CONSTANTS['pentagonal_trap']['inscribed_r']
 
@@ -741,21 +1218,48 @@ class SquashedPentagonalTrapezohedron(Mesh):
     def get_number_locations(self):
         vectors = [Vector(v) for v in self.vertices]
 
-        lerp_factor = self.number_v_offset
-        location_vectors = [
-            vectors[6].lerp(vectors[8], lerp_factor),
-            vectors[3].lerp(vectors[9], lerp_factor),
-            vectors[1].lerp(vectors[8], lerp_factor),
-            vectors[4].lerp(vectors[9], lerp_factor),
-            vectors[10].lerp(vectors[8], lerp_factor),
-            vectors[11].lerp(vectors[9], lerp_factor),
-            vectors[7].lerp(vectors[8], lerp_factor),
-            vectors[2].lerp(vectors[9], lerp_factor),
-            vectors[0].lerp(vectors[8], lerp_factor),
-            vectors[5].lerp(vectors[9], lerp_factor)
+        # Face vertex pairs for vertical lerp
+        face_vertices_data = [
+            (vectors[6], vectors[8]),  # Face 0
+            (vectors[3], vectors[9]),  # Face 1
+            (vectors[1], vectors[8]),  # Face 2
+            (vectors[4], vectors[9]),  # Face 3
+            (vectors[10], vectors[8]), # Face 4
+            (vectors[11], vectors[9]), # Face 5
+            (vectors[7], vectors[8]),  # Face 6
+            (vectors[2], vectors[9]),  # Face 7
+            (vectors[0], vectors[8]),  # Face 8
+            (vectors[5], vectors[9])   # Face 9
         ]
 
-        return [(v.x, v.y, v.z) for v in location_vectors]
+        # Get the rotations to understand number orientation
+        rotations = self.get_number_rotations()
+
+        locations = []
+        lerp_factor = self.number_v_offset
+        h_scale = self.number_h_offset * self.size / 4
+        v_scale = self.number_v_offset * self.size / 4
+
+        for (v1, v2), rot in zip(face_vertices_data, rotations):
+            # Base position from vertical offset (lerp between two opposite vertices)
+            base_pos = v1.lerp(v2, lerp_factor)
+
+            # Create rotation matrix from Euler angles
+            euler = Euler(rot, 'XYZ')
+            rot_matrix = euler.to_matrix()
+
+            # In the number's local space, X is right, Y is up (before rotation)
+            local_right = Vector((1, 0, 0))
+            local_up = Vector((0, 1, 0))
+
+            world_right = rot_matrix @ local_right
+            world_up = rot_matrix @ local_up
+
+            # Apply offsets in the number's coordinate system
+            pos = base_pos + world_right * h_scale + world_up * v_scale
+            locations.append((pos.x, pos.y, pos.z))
+
+        return locations
 
     def get_number_rotations(self):
         a = Vector(self.vertices[9])
@@ -777,8 +1281,8 @@ class SquashedPentagonalTrapezohedron(Mesh):
 
 class D10Mesh(SquashedPentagonalTrapezohedron):
 
-    def __init__(self, name, size, height, number_v_offset):
-        super().__init__(name, size, height, number_v_offset)
+    def __init__(self, name, size, height, number_v_offset, number_h_offset: float = 0.0):
+        super().__init__(name, size, height, number_v_offset, number_h_offset)
         self.base_font_scale = 0.6
 
     def get_numbers(self):
@@ -787,8 +1291,8 @@ class D10Mesh(SquashedPentagonalTrapezohedron):
 
 class D100Mesh(SquashedPentagonalTrapezohedron):
 
-    def __init__(self, name, size, height, number_v_offset):
-        super().__init__(name, size, height, number_v_offset)
+    def __init__(self, name, size, height, number_v_offset, number_h_offset: float = 0.0):
+        super().__init__(name, size, height, number_v_offset, number_h_offset)
         self.base_font_scale = 0.45
 
     def get_numbers(self):
@@ -1097,7 +1601,6 @@ SETTINGS_ATTRS = [
     "font_path",
     "number_scale",
     "number_depth",
-    "one_offset",
     "add_numbers",
     "number_indicator_type",
     "period_indicator_scale",
@@ -1108,6 +1611,8 @@ SETTINGS_ATTRS = [
     "center_bar",
     "number_v_offset",
     "number_center_offset",
+    "number_h_offset",
+    "num_faces",
     "base_height",
     "point_height",
     "top_point_height",
@@ -1554,7 +2059,7 @@ def add_bar_indicator(context, mesh_object: bpy.types.Object, font_size: float,
 
 def create_numbers(context, numbers, locations, rotations, font_path, font_size, number_depth, number_indicator_type,
                    period_indicator_scale, period_indicator_space, bar_indicator_height, bar_indicator_width,
-                   bar_indicator_space, center_bar, one_offset, custom_image_face=0, custom_image_path='',
+                   bar_indicator_space, center_bar, custom_image_face=0, custom_image_path='',
                    custom_image_scale=1):
     number_objs = []
     # create the number meshes
@@ -1562,7 +2067,7 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_size,
         number_object = create_number(context, numbers[i], font_path, font_size, number_depth, locations[i],
                                       rotations[i], number_indicator_type, period_indicator_scale,
                                       period_indicator_space, bar_indicator_height, bar_indicator_width,
-                                      bar_indicator_space, center_bar, one_offset,
+                                      bar_indicator_space, center_bar,
                                       custom_image_face=custom_image_face, custom_image_path=custom_image_path,
                                       custom_image_scale=custom_image_scale, index=i)
         number_objs.append(number_object)
@@ -1580,7 +2085,7 @@ def create_numbers(context, numbers, locations, rotations, font_path, font_size,
 
 def create_number(context, number, font_path, font_size, number_depth, location, rotation, number_indicator_type,
                   period_indicator_scale, period_indicator_space, bar_indicator_height, bar_indicator_width,
-                  bar_indicator_space, center_bar, one_offset, custom_image_face=0, custom_image_path='',
+                  bar_indicator_space, center_bar, custom_image_face=0, custom_image_path='',
                   custom_image_scale=1, index=0):
     """
     Create a number mesh that will be used in a boolean modifier
@@ -1601,13 +2106,7 @@ def create_number(context, number, font_path, font_size, number_depth, location,
     set_origin_center_bounds(mesh_object)
 
     if not use_custom_image:
-        if number == '1' and one_offset > 0:
-            # Offset the number 1 for alternative centering
-            number_width = mesh_object.dimensions.x
-            new_origin = Vector((mesh_object.location.x + number_width * one_offset, mesh_object.location.y,
-                                 mesh_object.location.z))
-            set_origin(mesh_object, new_origin)
-        elif number in ('6', '9'):
+        if number in ('6', '9'):
             # Add orientation indicators for 6 and 9
             if number_indicator_type == NUMBER_IND_PERIOD:
                 mesh_object = add_period_indicator(context, mesh_object, number, font_path, font_size,
@@ -1671,13 +2170,13 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
     if op.add_numbers:
         if op.number_indicator_type == NUMBER_IND_NONE:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
+                context, op.size, op.number_scale, op.number_depth, op.font_path,
                 custom_image_face=op.custom_image_face, custom_image_path=op.custom_image_path,
                 custom_image_scale=op.custom_image_scale
             )
         else:
             numbers_object = die.create_numbers(
-                context, op.size, op.number_scale, op.number_depth, op.font_path, op.one_offset,
+                context, op.size, op.number_scale, op.number_depth, op.font_path,
                 op.number_indicator_type, op.period_indicator_scale, op.period_indicator_space,
                 op.bar_indicator_height, op.bar_indicator_width, op.bar_indicator_space, op.center_bar,
                 custom_image_face=op.custom_image_face, custom_image_path=op.custom_image_path,
@@ -1695,10 +2194,10 @@ def execute_generator(op, context, mesh_cls, name: str, **kwargs) -> Dict[str, s
 
 
 # Common properties
-def Face2FaceProperty(default: float):
+def DiceSizeProperty(default: float):
     return FloatProperty(
-        name='Face2face Length',
-        description='Face-to-face size of the die (mm)',
+        name='Dice Size',
+        description='Size of the die (mm)',
         min=1,
         soft_min=1,
         max=100,
@@ -1795,16 +2294,6 @@ CustomImageScaleProperty = FloatProperty(
     default=1
 )
 
-OneOffsetProperty = FloatProperty(
-    name='Number 1 Offset',
-    description='Offset the number 1 horizontally for an alternative centering',
-    min=0,
-    soft_min=0,
-    max=1,
-    soft_max=1,
-    default=0
-)
-
 
 # Indicator properties
 def NumberIndicatorTypeProperty(default: str = NUMBER_IND_PERIOD):
@@ -1889,8 +2378,8 @@ def NumberVOffsetProperty(default: float): return FloatProperty(
 
 class DiceGenSettings(bpy.types.PropertyGroup):
     size: FloatProperty(
-        name="Face2Face Length",
-        description="Face-to-face size of the die (mm)",
+        name="Dice Size",
+        description="Size of the die (mm)",
         min=1,
         soft_min=1,
         max=100,
@@ -1914,7 +2403,6 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     number_depth: NumberDepthProperty
 
-    one_offset: OneOffsetProperty
 
     add_numbers: AddNumbersProperty
 
@@ -1932,7 +2420,7 @@ class DiceGenSettings(bpy.types.PropertyGroup):
 
     center_bar: CenterBarProperty
 
-    number_v_offset: NumberVOffsetProperty(1 / 3)
+    number_v_offset: NumberVOffsetProperty(0.0)
 
     number_center_offset: FloatProperty(
         name='Number Center Offset',
@@ -1942,6 +2430,16 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         max=1,
         soft_max=1,
         default=0.5
+    )
+
+    num_faces: IntProperty(
+        name='Number of Faces',
+        description='Number of faces on custom dice',
+        min=3,
+        soft_min=3,
+        max=100,
+        soft_max=20,
+        default=6
     )
 
     base_height: FloatProperty(
@@ -1994,449 +2492,25 @@ class DiceGenSettings(bpy.types.PropertyGroup):
         default=2 / 3
     )
 
-
-class DiceGeneratorBase:
-    dice_finish: DiceFinishProperty()
-    bumper_scale: BumperScaleProperty()
-
-    def invoke(self, context, event):
-        """Initialize operator properties from sidebar presets"""
-        presets = context.scene.dicegen_presets
-
-        # Copy common properties from presets
-        self.dice_finish = presets.dice_finish
-        self.bumper_scale = presets.bumper_scale
-
-        # Copy properties that exist on both presets and this operator
-        if hasattr(self, 'size'):
-            self.size = presets.size
-        if hasattr(self, 'add_numbers'):
-            self.add_numbers = presets.add_numbers
-        if hasattr(self, 'number_scale'):
-            self.number_scale = presets.number_scale
-        if hasattr(self, 'number_depth'):
-            self.number_depth = presets.number_depth
-        if hasattr(self, 'font_path'):
-            self.font_path = presets.font_path
-        if hasattr(self, 'one_offset'):
-            self.one_offset = presets.one_offset
-        if hasattr(self, 'number_indicator_type'):
-            self.number_indicator_type = presets.number_indicator_type
-        if hasattr(self, 'period_indicator_scale'):
-            self.period_indicator_scale = presets.period_indicator_scale
-        if hasattr(self, 'period_indicator_space'):
-            self.period_indicator_space = presets.period_indicator_space
-        if hasattr(self, 'bar_indicator_height'):
-            self.bar_indicator_height = presets.bar_indicator_height
-        if hasattr(self, 'bar_indicator_width'):
-            self.bar_indicator_width = presets.bar_indicator_width
-        if hasattr(self, 'bar_indicator_space'):
-            self.bar_indicator_space = presets.bar_indicator_space
-        if hasattr(self, 'center_bar'):
-            self.center_bar = presets.center_bar
-        if hasattr(self, 'custom_image_path'):
-            self.custom_image_path = presets.custom_image_path
-        if hasattr(self, 'custom_image_scale'):
-            self.custom_image_scale = presets.custom_image_scale
-        if hasattr(self, 'number_center_offset'):
-            self.number_center_offset = presets.number_center_offset
-        if hasattr(self, 'base_height'):
-            self.base_height = presets.base_height
-        if hasattr(self, 'point_height'):
-            self.point_height = presets.point_height
-        if hasattr(self, 'top_point_height'):
-            self.top_point_height = presets.top_point_height
-        if hasattr(self, 'bottom_point_height'):
-            self.bottom_point_height = presets.bottom_point_height
-        if hasattr(self, 'height'):
-            self.height = presets.height
-        if hasattr(self, 'number_v_offset'):
-            self.number_v_offset = presets.number_v_offset
-
-        # Don't copy custom_image_face from presets - each operator has the correct default
-        # (highest face number) already set in its property definition
-
-        # Call execute - the operator panel will show first due to bl_options REGISTER
-        return self.execute(context)
-
-    def draw(self, context):
-        layout = self.layout
-
-        layout.prop(self, "dice_finish")
-
-        seen_props = {"dice_finish"}
-        for cls in reversed(type(self).mro()):
-            annotations = getattr(cls, "__annotations__", {})
-            for prop_name in annotations:
-                if prop_name in seen_props:
-                    continue
-
-                if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
-                    continue
-
-                if hasattr(self, prop_name):
-                    layout.prop(self, prop_name)
-                    seen_props.add(prop_name)
-
-
-class D4Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D4"""
-    bl_idname = 'mesh.d4_add'
-    bl_label = 'D4 Tetrahedron'
-    bl_description = 'Generate a tetrahedron dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    number_indicator_type = NUMBER_IND_NONE
-
-    size: FloatProperty(
-        name='Face2Point Length',
-        description='Face-to-point size of the die (mm)',
-        min=1,
-        soft_min=1,
-        max=100,
-        soft_max=100,
-        default=20
+    number_h_offset: FloatProperty(
+        name='Number Horizontal Offset',
+        description='Horizontal offset for number positioning on dice faces',
+        min=-1.0,
+        soft_min=-1.0,
+        max=1.0,
+        soft_max=1.0,
+        default=0.0
     )
 
-    add_numbers: AddNumbersProperty
 
-    number_scale: NumberScaleProperty
-
-    number_depth: NumberDepthProperty
-
-    font_path: FontPathProperty
-
-    custom_image_path: CustomImagePathProperty
-
-    custom_image_face: CustomImageFaceProperty(4)
-
-    custom_image_scale: CustomImageScaleProperty
-
-    one_offset: OneOffsetProperty
-
-    number_center_offset: FloatProperty(
-        name='Number Center Offset',
-        description='Distance of numbers from the center of a face',
-        min=0.0,
-        soft_min=0.0,
-        max=1,
-        soft_max=1,
-        default=0.5
-    )
-
-    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, Tetrahedron, 'd4', number_center_offset=self.number_center_offset)
-
-
-class D4CrystalGenerator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D4 crystal"""
-    bl_idname = 'mesh.d4_crystal_add'
-    bl_label = 'D4 Crystal'
-    bl_description = 'Generate a D4 crystal dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    number_indicator_type = NUMBER_IND_NONE
-
-    size: Face2FaceProperty(12)
-
-    base_height: FloatProperty(
-        name='Base Height',
-        description='Base height of the die (height of a face) (mm)',
-        min=1,
-        soft_min=1,
-        max=100,
-        soft_max=100,
-        default=14
-    )
-
-    point_height: FloatProperty(
-        name='Point Height',
-        description='Point height of the die (mm)',
-        min=1,
-        soft_min=1,
-        max=100,
-        soft_max=100,
-        default=7
-    )
-
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(4)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, D4Crystal, 'd4Crystal', base_height=self.base_height,
-                                 point_height=self.point_height)
-
-
-class D4ShardGenerator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D4 shard"""
-    bl_idname = 'mesh.d4_shard_add'
-    bl_label = 'D4 Shard'
-    bl_description = 'Generate a D4 crystal dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    number_indicator_type = NUMBER_IND_NONE
-
-    size: FloatProperty(
-        name='Edge2edge length',
-        description='Distance between 2 opposite horizontal edges (mm)',
-        min=1,
-        soft_min=1,
-        max=100,
-        soft_max=100,
-        default=12
-    )
-
-    top_point_height: FloatProperty(
-        name='Top Point Height',
-        description='Top point height of the die',
-        min=0.25,
-        soft_min=0.25,
-        max=2,
-        soft_max=2,
-        default=0.75
-    )
-
-    bottom_point_height: FloatProperty(
-        name='Bottom Point Height',
-        description='Bottom point height of the die',
-        min=0.25,
-        soft_min=0.25,
-        max=2.5,
-        soft_max=2.5,
-        default=1.75
-    )
-
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_v_offset: NumberVOffsetProperty(0.75)
-    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(4)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, D4Shard, 'd4Shard', top_point_height=self.top_point_height,
-                                 bottom_point_height=self.bottom_point_height, number_v_offset=self.number_v_offset)
-
-
-class D6Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D6"""
-    bl_idname = 'mesh.d6_add'
-    bl_label = 'D6 Cube'
-    bl_description = 'Generate a cube dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    size: Face2FaceProperty(16)
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(6)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, Cube, 'd6')
-
-
-class D8Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D8"""
-    bl_idname = 'mesh.d8_add'
-    bl_label = 'D8 Octahedron'
-    bl_description = 'Generate a octahedron dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    size: Face2FaceProperty(15)
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_indicator_type: NumberIndicatorTypeProperty(NUMBER_IND_NONE)
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(8)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, Octahedron, 'd8')
-
-
-class D12Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D12"""
-    bl_idname = 'mesh.d12_add'
-    bl_label = 'D12 Dodecahedron'
-    bl_description = 'Generate a dodecahedron dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    size: Face2FaceProperty(18)
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_indicator_type: NumberIndicatorTypeProperty()
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(12)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, Dodecahedron, 'd12')
-
-
-class D20Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D20"""
-    bl_idname = 'mesh.d20_add'
-    bl_label = 'D20 Icosahedron'
-    bl_description = 'Generate an icosahedron dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    size: Face2FaceProperty(20)
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_indicator_type: NumberIndicatorTypeProperty()
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(20)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, Icosahedron, 'd20')
-
-
-class D10Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D10"""
-    bl_idname = 'mesh.d10_add'
-    bl_label = 'D10 Trapezohedron'
-    bl_description = 'Generate an d10 trapezohedron dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    size: Face2FaceProperty(17)
-
-    height: FloatProperty(
-        name='Dice Height',
-        description='Height of the die',
-        min=0.45,
-        soft_min=0.45,
-        max=2,
-        soft_max=2,
-        default=2 / 3
-    )
-
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    one_offset: OneOffsetProperty
-    number_v_offset: NumberVOffsetProperty(1 / 3)
-    number_indicator_type: NumberIndicatorTypeProperty()
-    period_indicator_scale: PeriodIndicatorScaleProperty
-    period_indicator_space: PeriodIndicatorSpaceProperty
-    bar_indicator_height: BarIndicatorHeightProperty
-    bar_indicator_width: BarIndicatorWidthProperty
-    bar_indicator_space: BarIndicatorSpaceProperty
-    center_bar: CenterBarProperty
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(10)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, D10Mesh, 'd10', height=self.height,
-                                 number_v_offset=self.number_v_offset)
-
-
-class D100Generator(DiceGeneratorBase, bpy.types.Operator):
-    """Generate a D100"""
-    bl_idname = 'mesh.d100_add'
-    bl_label = 'D100 Trapezohedron'
-    bl_description = 'Generate an d100 trapezohedron dice'
-    bl_options = {'REGISTER', 'UNDO'}
-
-    number_indicator_type = NUMBER_IND_NONE
-    one_offset = 0
-
-    size: Face2FaceProperty(17)
-
-    height: FloatProperty(
-        name='Dice Height',
-        description='Height of the die',
-        min=0.45,
-        soft_min=0.45,
-        max=2,
-        soft_max=2,
-        default=2 / 3
-    )
-
-    add_numbers: AddNumbersProperty
-    number_scale: NumberScaleProperty
-    number_depth: NumberDepthProperty
-    font_path: FontPathProperty
-    number_v_offset: NumberVOffsetProperty(1 / 3)
-    custom_image_path: CustomImagePathProperty
-    custom_image_face: CustomImageFaceProperty(10)
-    custom_image_scale: CustomImageScaleProperty
-
-    def execute(self, context):
-        return execute_generator(self, context, D100Mesh, 'd100', height=self.height,
-                                 number_v_offset=self.number_v_offset)
-
+# ============================================================================
+# OLD OPERATOR CLASSES - REMOVED
+# All dice generation now uses DICE_OT_add_from_preset operator
+# The individual operator classes (DiceGeneratorBase, D4Generator, D6Generator, etc.)
+# have been removed as they are no longer used. The Add Mesh menu now calls
+# DICE_OT_add_from_preset directly.
+# Removed ~577 lines of duplicate code
+# ============================================================================
 
 class OBJECT_OT_dice_gen_update(bpy.types.Operator):
     bl_idname = "object.dice_gen_update"
@@ -2476,6 +2550,8 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
             "Tetrahedron": Tetrahedron,
             "D4Crystal": D4Crystal,
             "D4Shard": D4Shard,
+            "CustomCrystal": CustomCrystal,
+            "CustomShard": CustomShard,
             "Cube": Cube,
             "Octahedron": Octahedron,
             "Dodecahedron": Dodecahedron,
@@ -2494,11 +2570,22 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
         if die_type == "Tetrahedron":
             die = mesh_cls(body_obj.name, size, settings_values["number_center_offset"])
         elif die_type == "D4Crystal":
-            die = mesh_cls(body_obj.name, size, settings_values["base_height"], settings_values["point_height"])
+            die = mesh_cls(body_obj.name, size, settings_values["base_height"], settings_values["top_point_height"], settings_values["bottom_point_height"])
+        elif die_type == "CustomCrystal":
+            die = mesh_cls(body_obj.name, size, settings_values["num_faces"], settings_values["base_height"], settings_values["top_point_height"], settings_values["bottom_point_height"])
         elif die_type == "D4Shard":
             die = mesh_cls(
                 body_obj.name,
                 size,
+                settings_values["top_point_height"],
+                settings_values["bottom_point_height"],
+                settings_values["number_v_offset"],
+            )
+        elif die_type == "CustomShard":
+            die = mesh_cls(
+                body_obj.name,
+                size,
+                settings_values["num_faces"],
                 settings_values["top_point_height"],
                 settings_values["bottom_point_height"],
                 settings_values["number_v_offset"],
@@ -2530,7 +2617,6 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_scale"],
                         settings_values["number_depth"],
                         font_path,
-                        settings_values["one_offset"],
                         settings_values["number_indicator_type"],
                         settings_values["period_indicator_scale"],
                         settings_values["period_indicator_space"],
@@ -2549,7 +2635,6 @@ class OBJECT_OT_dice_gen_update(bpy.types.Operator):
                         settings_values["number_scale"],
                         settings_values["number_depth"],
                         font_path,
-                        settings_values["one_offset"],
                         custom_image_face=settings_values["custom_image_face"],
                         custom_image_path=custom_image_path,
                         custom_image_scale=settings_values["custom_image_scale"],
@@ -2653,15 +2738,42 @@ class MeshDiceAdd(Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator_context = 'INVOKE_REGION_WIN'
-        layout.operator('mesh.d4_add', text='D4 Tetrahedron')
-        layout.operator('mesh.d4_crystal_add', text='D4 Crystal')
-        layout.operator('mesh.d4_shard_add', text='D4 Shard')
-        layout.operator('mesh.d6_add', text='D6 Cube')
-        layout.operator('mesh.d8_add', text='D8 Octahedron')
-        layout.operator('mesh.d10_add', text='D10 Trapezohedron')
-        layout.operator('mesh.d100_add', text='D100 Trapezohedron')
-        layout.operator('mesh.d12_add', text='D12 Dodecahedron')
-        layout.operator('mesh.d20_add', text='D20 Icosahedron')
+
+        # Use the sidebar operator for everything - single code path
+        op = layout.operator('dicegen.add_from_preset', text='D4 Tetrahedron')
+        op.dice_type = 'D4'
+
+        op = layout.operator('dicegen.add_from_preset', text='D4 Crystal')
+        op.dice_type = 'D4_CRYSTAL'
+
+        op = layout.operator('dicegen.add_from_preset', text='D4 Shard')
+        op.dice_type = 'D4_SHARD'
+
+        op = layout.operator('dicegen.add_from_preset', text='D6 Cube')
+        op.dice_type = 'D6'
+
+        op = layout.operator('dicegen.add_from_preset', text='D8 Octahedron')
+        op.dice_type = 'D8'
+
+        op = layout.operator('dicegen.add_from_preset', text='D10 Trapezohedron')
+        op.dice_type = 'D10'
+
+        op = layout.operator('dicegen.add_from_preset', text='D100 Trapezohedron')
+        op.dice_type = 'D100'
+
+        op = layout.operator('dicegen.add_from_preset', text='D12 Dodecahedron')
+        op.dice_type = 'D12'
+
+        op = layout.operator('dicegen.add_from_preset', text='D20 Icosahedron')
+        op.dice_type = 'D20'
+
+        layout.separator()
+
+        op = layout.operator('dicegen.add_from_preset', text='Custom Crystal')
+        op.dice_type = 'CUSTOM_CRYSTAL'
+
+        op = layout.operator('dicegen.add_from_preset', text='Custom Shard')
+        op.dice_type = 'CUSTOM_SHARD'
 
 
 # Define "Extras" menu
@@ -2680,8 +2792,8 @@ class DiceGenPresets(bpy.types.PropertyGroup):
     bumper_scale: BumperScaleProperty()
 
     size: FloatProperty(
-        name="Face2Face Length",
-        description="Face-to-face size of the die (mm)",
+        name="Dice Size",
+        description="Size of the die (mm)",
         min=1,
         soft_min=1,
         max=100,
@@ -2693,7 +2805,6 @@ class DiceGenPresets(bpy.types.PropertyGroup):
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
-    one_offset: OneOffsetProperty
 
     number_indicator_type: NumberIndicatorTypeProperty()
     period_indicator_scale: PeriodIndicatorScaleProperty
@@ -2717,6 +2828,16 @@ class DiceGenPresets(bpy.types.PropertyGroup):
         default=0.5
     )
 
+    num_faces: IntProperty(
+        name='Number of Faces',
+        description='Number of faces on custom dice',
+        min=3,
+        soft_min=3,
+        max=100,
+        soft_max=20,
+        default=6
+    )
+
     # Geometry-specific properties
     base_height: FloatProperty(
         name='Base Height',
@@ -2738,21 +2859,21 @@ class DiceGenPresets(bpy.types.PropertyGroup):
     )
     top_point_height: FloatProperty(
         name='Top Point Height',
-        description='Top point height of the die (D4 Shard)',
+        description='Top point height of the die',
         min=0.25,
         soft_min=0.25,
-        max=2,
-        soft_max=2,
-        default=0.75
+        max=100,
+        soft_max=100,
+        default=7
     )
     bottom_point_height: FloatProperty(
         name='Bottom Point Height',
-        description='Bottom point height of the die (D4 Shard)',
+        description='Bottom point height of the die',
         min=0.25,
         soft_min=0.25,
-        max=2.5,
-        soft_max=2.5,
-        default=1.75
+        max=100,
+        soft_max=100,
+        default=7
     )
     height: FloatProperty(
         name='Dice Height',
@@ -2763,6 +2884,36 @@ class DiceGenPresets(bpy.types.PropertyGroup):
         soft_max=2,
         default=2 / 3
     )
+
+    top_point_height_shard: FloatProperty(
+        name='Top Point Height (Shard)',
+        description='Top point height for shard dice (relative multiplier)',
+        min=0.25,
+        soft_min=0.25,
+        max=2,
+        soft_max=2,
+        default=0.75
+    )
+    bottom_point_height_shard: FloatProperty(
+        name='Bottom Point Height (Shard)',
+        description='Bottom point height for shard dice (relative multiplier)',
+        min=0.25,
+        soft_min=0.25,
+        max=2.5,
+        soft_max=2.5,
+        default=1.75
+    )
+
+    number_h_offset: FloatProperty(
+        name='Number Horizontal Offset',
+        description='Horizontal offset for number positioning on dice faces',
+        min=-1.0,
+        soft_min=-1.0,
+        max=1.0,
+        soft_max=1.0,
+        default=0.0
+    )
+
     number_v_offset_d4_shard: FloatProperty(
         name='Number Vertical Offset (D4 Shard)',
         description='Vertical offset of numbers for D4 Shard',
@@ -2801,6 +2952,8 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             ('D12', 'D12', 'Dodecahedron'),
             ('D20', 'D20', 'Icosahedron'),
             ('D100', 'D100', 'Trapezohedron'),
+            ('CUSTOM_CRYSTAL', 'Custom Crystal', 'Custom Crystal Dice'),
+            ('CUSTOM_SHARD', 'Custom Shard', 'Custom Shard Dice'),
         ]
     )
 
@@ -2808,8 +2961,8 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
     dice_finish: DiceFinishProperty()
     bumper_scale: BumperScaleProperty()
     size: FloatProperty(
-        name="Face2Face Length",
-        description="Face-to-face size of the die (mm)",
+        name="Dice Size",
+        description="Size of the die (mm)",
         min=1,
         soft_min=1,
         max=100,
@@ -2820,7 +2973,6 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
     number_scale: NumberScaleProperty
     number_depth: NumberDepthProperty
     font_path: FontPathProperty
-    one_offset: OneOffsetProperty
     number_indicator_type: NumberIndicatorTypeProperty()
     period_indicator_scale: PeriodIndicatorScaleProperty
     period_indicator_space: PeriodIndicatorSpaceProperty
@@ -2848,6 +3000,15 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         soft_max=1,
         default=0.5
     )
+    num_faces: IntProperty(
+        name='Number of Faces',
+        description='Number of faces on custom dice',
+        min=3,
+        soft_min=3,
+        max=100,
+        soft_max=20,
+        default=6
+    )
     base_height: FloatProperty(
         name='Base Height',
         description='Base height of the die (D4 Crystal) (mm)',
@@ -2868,21 +3029,21 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
     )
     top_point_height: FloatProperty(
         name='Top Point Height',
-        description='Top point height of the die (D4 Shard)',
+        description='Top point height of the die',
         min=0.25,
         soft_min=0.25,
-        max=2,
-        soft_max=2,
-        default=0.75
+        max=100,
+        soft_max=100,
+        default=7
     )
     bottom_point_height: FloatProperty(
         name='Bottom Point Height',
-        description='Bottom point height of the die (D4 Shard)',
+        description='Bottom point height of the die',
         min=0.25,
         soft_min=0.25,
-        max=2.5,
-        soft_max=2.5,
-        default=1.75
+        max=100,
+        soft_max=100,
+        default=7
     )
     height: FloatProperty(
         name='Dice Height',
@@ -2893,45 +3054,85 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         soft_max=2,
         default=2 / 3
     )
-    number_v_offset_d4_shard: FloatProperty(
-        name='Number Vertical Offset (D4 Shard)',
-        description='Vertical offset of numbers for D4 Shard',
-        min=0,
-        soft_min=0,
-        max=1,
-        soft_max=1,
-        default=0.75
-    )
     number_v_offset: FloatProperty(
-        name='Number Vertical Offset (D10/D100)',
-        description='Vertical offset of numbers for D10 and D100',
+        name='Number Vertical Offset',
+        description='Vertical offset of numbers on the dice faces',
         min=0,
         soft_min=0,
         max=1,
         soft_max=1,
-        default=0.33
+        default=0.0
+    )
+
+    number_h_offset: FloatProperty(
+        name='Number Horizontal Offset',
+        description='Horizontal offset for number positioning on dice faces',
+        min=-1.0,
+        soft_min=-1.0,
+        max=1.0,
+        soft_max=1.0,
+        default=0.0
     )
 
     def draw(self, context):
-        """Draw the operator panel with all dice options - matches Add Mesh > Dice panels"""
+        """Draw the operator panel with only relevant properties for the selected dice type"""
         layout = self.layout
 
-        # Use the same automatic property display as DiceGeneratorBase
+        # Define which properties are relevant for each dice type
+        property_relevance = {
+            'D4': ['size', 'number_center_offset', 'add_numbers', 'number_scale', 'number_depth',
+                   'number_h_offset', 'number_v_offset', 'font_path', 'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D4_CRYSTAL': ['size', 'base_height', 'top_point_height', 'bottom_point_height', 'add_numbers', 'number_scale',
+                          'number_depth', 'number_h_offset', 'number_v_offset', 'font_path', 'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D4_SHARD': ['size', 'top_point_height', 'bottom_point_height',
+                        'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                        'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D6': ['size', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                   'number_indicator_type', 'period_indicator_scale', 'period_indicator_space',
+                   'bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar',
+                   'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D8': ['size', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                   'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D10': ['size', 'height', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset',
+                   'font_path', 'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D100': ['size', 'height', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset',
+                    'font_path', 'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D12': ['size', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                    'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'D20': ['size', 'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                    'number_indicator_type', 'period_indicator_scale', 'period_indicator_space',
+                    'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'CUSTOM_CRYSTAL': ['size', 'num_faces', 'base_height', 'top_point_height', 'bottom_point_height', 'add_numbers',
+                              'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                              'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+            'CUSTOM_SHARD': ['size', 'num_faces', 'top_point_height', 'bottom_point_height',
+                            'add_numbers', 'number_scale', 'number_depth', 'number_h_offset', 'number_v_offset', 'font_path',
+                            'custom_image_path', 'custom_image_face', 'custom_image_scale'],
+        }
+
+        # Always show dice finish first
         layout.prop(self, "dice_finish")
+        if self.dice_finish == "bumpers":
+            layout.prop(self, "bumper_scale")
 
-        seen_props = {"dice_finish", "dice_type"}  # Skip dice_type enum
-        for cls in reversed(type(self).mro()):
-            annotations = getattr(cls, "__annotations__", {})
-            for prop_name in annotations:
-                if prop_name in seen_props:
-                    continue
+        # Get relevant properties for this dice type
+        relevant_props = property_relevance.get(self.dice_type, [])
 
-                if prop_name == "bumper_scale" and self.dice_finish != "bumpers":
-                    continue
-
-                if hasattr(self, prop_name):
+        # Draw properties in order
+        for prop_name in relevant_props:
+            if hasattr(self, prop_name):
+                # Special handling for number indicator properties
+                if prop_name == 'number_indicator_type':
+                    if self.add_numbers:
+                        layout.prop(self, prop_name)
+                elif prop_name in ['period_indicator_scale', 'period_indicator_space']:
+                    if self.add_numbers and self.number_indicator_type == 'period':
+                        layout.prop(self, prop_name)
+                elif prop_name in ['bar_indicator_height', 'bar_indicator_width', 'bar_indicator_space', 'center_bar']:
+                    if self.add_numbers and self.number_indicator_type == 'bar':
+                        layout.prop(self, prop_name)
+                else:
                     layout.prop(self, prop_name)
-                    seen_props.add(prop_name)
 
     def invoke(self, context, event):
         """Initialize operator properties from presets when invoked"""
@@ -2945,7 +3146,6 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         self.number_scale = presets.number_scale
         self.number_depth = presets.number_depth
         self.font_path = presets.font_path
-        self.one_offset = presets.one_offset
         self.number_indicator_type = presets.number_indicator_type
         self.period_indicator_scale = presets.period_indicator_scale
         self.period_indicator_space = presets.period_indicator_space
@@ -2961,7 +3161,24 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
         self.top_point_height = presets.top_point_height
         self.bottom_point_height = presets.bottom_point_height
         self.height = presets.height
-        self.number_v_offset = presets.number_v_offset
+        self.num_faces = presets.num_faces
+        self.number_h_offset = presets.number_h_offset
+
+        # Set number_v_offset based on dice type
+        # Shard-type dice use 0.75, D10/D100 use 0.33, all others use 0.0
+        if self.dice_type in ['D4_SHARD', 'CUSTOM_SHARD']:
+            self.number_v_offset = presets.number_v_offset_d4_shard  # 0.75
+        elif self.dice_type in ['D10', 'D100']:
+            self.number_v_offset = presets.number_v_offset  # 0.33
+        else:
+            self.number_v_offset = 0.0  # D4, D6, D8, D12, D20, D4_CRYSTAL, CUSTOM_CRYSTAL
+
+        # Set point heights based on dice type
+        # Crystal dice use absolute mm (7mm default), shards use relative multipliers (0.75, 1.75)
+        if self.dice_type in ['D4_SHARD', 'CUSTOM_SHARD']:
+            # For shards, use relative multiplier defaults
+            self.top_point_height = presets.top_point_height_shard
+            self.bottom_point_height = presets.bottom_point_height_shard
 
         # Set custom_image_face based on dice type (highest face)
         dice_face_map = {
@@ -2974,6 +3191,8 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
             'D12': 12,
             'D20': 20,
             'D100': 10,  # D100 uses same faces as D10
+            'CUSTOM_CRYSTAL': self.num_faces,
+            'CUSTOM_SHARD': self.num_faces,
         }
         self.custom_image_face = dice_face_map.get(self.dice_type, presets.custom_image_face)
 
@@ -2982,15 +3201,17 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
     def execute(self, context):
         # Map dice type to mesh class and generator params
         dice_map = {
-            'D4': (Tetrahedron, 'd4', {'number_center_offset': self.number_center_offset}),
-            'D4_CRYSTAL': (D4Crystal, 'd4Crystal', {'base_height': self.base_height, 'point_height': self.point_height}),
-            'D4_SHARD': (D4Shard, 'd4Shard', {'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset_d4_shard}),
-            'D6': (Cube, 'd6', {}),
-            'D8': (Octahedron, 'd8', {}),
-            'D10': (D10Mesh, 'd10', {'height': self.height, 'number_v_offset': self.number_v_offset}),
-            'D12': (Dodecahedron, 'd12', {}),
-            'D20': (Icosahedron, 'd20', {}),
-            'D100': (D100Mesh, 'd100', {'height': self.height, 'number_v_offset': self.number_v_offset}),
+            'D4': (Tetrahedron, 'd4', {'number_center_offset': self.number_center_offset, 'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'D4_CRYSTAL': (D4Crystal, 'd4Crystal', {'base_height': self.base_height, 'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'D4_SHARD': (D4Shard, 'd4Shard', {'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
+            'CUSTOM_CRYSTAL': (CustomCrystal, 'customCrystal', {'num_faces': self.num_faces, 'base_height': self.base_height, 'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'CUSTOM_SHARD': (CustomShard, 'customShard', {'num_faces': self.num_faces, 'top_point_height': self.top_point_height, 'bottom_point_height': self.bottom_point_height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
+            'D6': (Cube, 'd6', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'D8': (Octahedron, 'd8', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'D10': (D10Mesh, 'd10', {'height': self.height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
+            'D12': (Dodecahedron, 'd12', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'D20': (Icosahedron, 'd20', {'number_h_offset': self.number_h_offset, 'number_v_offset': self.number_v_offset}),
+            'D100': (D100Mesh, 'd100', {'height': self.height, 'number_v_offset': self.number_v_offset, 'number_h_offset': self.number_h_offset}),
         }
 
         if self.dice_type not in dice_map:
@@ -3028,7 +3249,6 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
                     self.number_scale,
                     self.number_depth,
                     self.font_path if self.font_path else '',
-                    self.one_offset,
                     custom_image_face=self.custom_image_face,
                     custom_image_path=self.custom_image_path if self.custom_image_path else '',
                     custom_image_scale=self.custom_image_scale
@@ -3040,7 +3260,6 @@ class DICE_OT_add_from_preset(bpy.types.Operator):
                     self.number_scale,
                     self.number_depth,
                     self.font_path if self.font_path else '',
-                    self.one_offset,
                     number_indicator_type,
                     self.period_indicator_scale,
                     self.period_indicator_space,
@@ -3097,8 +3316,6 @@ class VIEW3D_PT_dice_gen_sidebar(bpy.types.Panel):
             box.prop(presets, "number_scale")
             box.prop(presets, "number_depth")
             box.prop(presets, "font_path")
-            box.prop(presets, "one_offset")
-            box.prop(presets, "number_center_offset")
 
             # Number indicators (for D10/D100)
             box.label(text="Number Indicators (D10/D100):")
@@ -3153,23 +3370,34 @@ class VIEW3D_PT_dice_gen_sidebar(bpy.types.Panel):
         op = col.operator("dicegen.add_from_preset", text="D100 Trapezohedron")
         op.dice_type = 'D100'
 
+        col.separator()
+
+        op = col.operator("dicegen.add_from_preset", text="Custom Crystal")
+        op.dice_type = 'CUSTOM_CRYSTAL'
+
+        op = col.operator("dicegen.add_from_preset", text="Custom Shard")
+        op.dice_type = 'CUSTOM_SHARD'
+
 
 classes = [
     DiceGenSettings,
     DiceGenPresets,
     MeshDiceAdd,
-    D4Generator,
-    D4CrystalGenerator,
-    D4ShardGenerator,
-    D6Generator,
-    D8Generator,
-    D10Generator,
-    D100Generator,
-    D12Generator,
-    D20Generator,
+    # Old individual operators removed - Add Mesh menu now uses DICE_OT_add_from_preset
+    # D4Generator,
+    # D4CrystalGenerator,
+    # D4ShardGenerator,
+    # CustomCrystalGenerator,
+    # CustomShardGenerator,
+    # D6Generator,
+    # D8Generator,
+    # D10Generator,
+    # D100Generator,
+    # D12Generator,
+    # D20Generator,
     OBJECT_OT_dice_gen_update,
     OBJECT_PT_dice_gen,
-    DICE_OT_add_from_preset,
+    DICE_OT_add_from_preset,  # Single unified operator for all dice generation
     VIEW3D_PT_dice_gen_sidebar
 ]
 
